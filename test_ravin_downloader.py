@@ -69,7 +69,7 @@ class ParserTests(unittest.TestCase):
                 {
                     "RAVIN_USERNAME": "0935",
                     "RAVIN_PASSWORD": 'pass"word',
-                    "RAVIN_COOKIE": "MoodleSession=secret; cf_clearance=value",
+                    "RAVIN_COOKIE": "example_session=synthetic-value",
                 },
             )
             self.assertEqual(
@@ -78,7 +78,7 @@ class ParserTests(unittest.TestCase):
                     "UNRELATED": "keep me",
                     "RAVIN_USERNAME": "0935",
                     "RAVIN_PASSWORD": 'pass"word',
-                    "RAVIN_COOKIE": "MoodleSession=secret; cf_clearance=value",
+                    "RAVIN_COOKIE": "example_session=synthetic-value",
                 },
             )
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)

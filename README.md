@@ -1,34 +1,56 @@
-# Ravin Academy course downloader
+# Ravin Moodle Downloader
 
-This small, dependency-free command-line tool lists the Moodle courses available to your account and downloads the files in a selected course. It first tries Moodle's official mobile web-service API and automatically falls back to a normal web login plus Moodle's own authenticated AJAX interface.
+A dependency-free command-line client that lists your enrolled Moodle courses and downloads accessible course files. It defaults to Ravin Academy, but accepts another Moodle base URL through `--site`.
 
-Your password is read with a hidden prompt and is never written to disk.
+The client first tries Moodle's official mobile web-service API and falls back to a normal web login plus Moodle's authenticated AJAX interface. For sites protected by Cloudflare, it can reuse request headers from a browser session.
 
-## Usage
+> [!IMPORTANT]
+> Use this tool only for courses and files your account is authorized to access. Respect the LMS terms, instructor permissions, and applicable copyright rules. This project does not bypass enrollment, DRM, or access controls.
 
-Python 3.10 or newer is recommended.
+## Requirements
+
+- Python 3.10 or newer
+- An active enrollment on the target Moodle site
+
+The runtime has no third-party Python dependencies.
+
+## Installation
+
+After cloning or downloading the repository, install the command from its root directory:
 
 ```bash
-python3 ravin_downloader.py --username YOUR_USERNAME courses
-python3 ravin_downloader.py --username YOUR_USERNAME files 44
-python3 ravin_downloader.py --username YOUR_USERNAME download 44
+python3 -m pip install .
+```
+
+You can then use `ravin-downloader` from any shell. Running `python3 ravin_downloader.py` directly from the repository remains supported.
+
+## Quick start
+
+```bash
+ravin-downloader courses
+ravin-downloader files COURSE_ID
+ravin-downloader download COURSE_ID
 ```
 
 Files are saved under `downloads/<course-id>/...`. Existing completed files are skipped; interrupted downloads use a temporary `.part` suffix. Use `--overwrite` if you want to replace existing files.
 
-For scripting, credentials can be supplied for the current shell process and output can be JSON:
+For scripting, use JSON output:
 
 ```bash
-RAVIN_USERNAME='your-user' RAVIN_PASSWORD='your-password' \
-  python3 ravin_downloader.py --json courses
+ravin-downloader --json courses
+ravin-downloader --json files COURSE_ID
 ```
 
-Avoid putting the password directly in shell history. Prefer the normal hidden password prompt when working interactively.
+## Configuration
+
+On first use, missing values are requested interactively and saved in `.env` in the current directory. Copy [`.env.example`](.env.example) if you prefer to configure it manually. The file is Git-ignored and written with owner-only permissions.
+
+Never commit or share `.env`. It may contain both account credentials and a temporary authenticated browser session.
 
 If the academy disables its mobile token service, the fallback is automatic. You can force that path for troubleshooting:
 
 ```bash
-python3 ravin_downloader.py --web-only --username YOUR_USERNAME courses
+ravin-downloader --web-only --username YOUR_USERNAME courses
 ```
 
 ## When Cloudflare blocks terminal login
@@ -42,7 +64,7 @@ Ravin Academy currently puts a Cloudflare browser check in front of both Moodle 
 5. Run the browser-session mode:
 
 ```bash
-python3 ravin_downloader.py --browser-session courses
+ravin-downloader --browser-session courses
 ```
 
 Paste the User-Agent normally and the Cookie header into the hidden prompt. After the headers are validated, they are saved in `.env` with owner-only permissions and ignored by Git. The same file can contain all four values:
@@ -57,16 +79,29 @@ RAVIN_COOKIE="the complete browser Cookie header"
 Values entered at the script's prompts are written or updated automatically. Later commands reuse `.env`, so you can simply run:
 
 ```bash
-python3 ravin_downloader.py files 44
-python3 ravin_downloader.py download 44
+ravin-downloader files 44
+ravin-downloader download 44
 ```
 
 The saved session is checked on every run. When it expires or Cloudflare rejects it, the tool asks for fresh headers and replaces the saved copy. You can force that refresh yourself with:
 
 ```bash
-python3 ravin_downloader.py --refresh-session courses
+ravin-downloader --refresh-session courses
 ```
 
 Never send `.env`, your password, or its Cookie value to another person; they grant access to your LMS account or signed-in session.
 
-The tool only requests content that the supplied account is already authorized to view. It does not bypass enrollment, permissions, DRM, or access controls.
+## Development
+
+Run the test suite without installing additional packages:
+
+```bash
+python3 -m unittest -v
+python3 -m py_compile ravin_downloader.py
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [SECURITY.md](SECURITY.md) for reporting security issues.
+
+## License and disclaimer
+
+Released under the [MIT License](LICENSE). This is an independent community project and is not affiliated with or endorsed by Ravin Academy or Moodle HQ.

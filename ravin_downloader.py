@@ -31,9 +31,10 @@ from typing import Any, Iterable
 
 
 DEFAULT_SITE = "https://training.ravinacademy.com"
-USER_AGENT = "RavinCourseDownloader/1.0 (+personal Moodle client)"
+__version__ = "0.1.0"
+USER_AGENT = f"RavinMoodleDownloader/{__version__} (+personal Moodle client)"
 DOWNLOADABLE_MODULES = {"resource", "folder", "page", "book"}
-DEFAULT_ENV_FILE = Path(__file__).resolve().with_name(".env")
+DEFAULT_ENV_FILE = Path.cwd() / ".env"
 ENV_KEYS = {
     "username": "RAVIN_USERNAME",
     "password": "RAVIN_PASSWORD",
@@ -809,6 +810,7 @@ def _format_size(size: int | None) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="List and download your Ravin Academy Moodle course files.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--site", default=DEFAULT_SITE, help=f"Moodle base URL (default: {DEFAULT_SITE})")
     parser.add_argument("--username", help="LMS username; password is prompted securely")
     parser.add_argument("--web-only", action="store_true", help="skip the Moodle mobile API and use a normal web session")
