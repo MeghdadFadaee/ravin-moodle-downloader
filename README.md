@@ -32,7 +32,7 @@ ravin-downloader files COURSE_ID
 ravin-downloader download COURSE_ID
 ```
 
-Files are saved under `downloads/<course-id>/...`. Existing completed files are skipped; interrupted downloads use a temporary `.part` suffix. Use `--overwrite` if you want to replace existing files.
+Files are saved under `downloads/<course-id>/...`. Existing completed files are skipped; interrupted downloads use a temporary `.part` suffix and resume automatically with HTTP byte-range requests. Use `--overwrite` if you want to replace existing files, or `--retries` to change the default five retries per file.
 
 For scripting, use JSON output:
 

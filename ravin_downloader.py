@@ -14,6 +14,7 @@ import argparse
 import getpass
 import html
 import http.cookiejar
+import http.client
 import json
 import mimetypes
 import os
@@ -591,7 +592,14 @@ class MoodleClient:
             url=url,
         )
 
-    def download(self, item: FileItem, root: Path, overwrite: bool = False) -> Path:
+    def download(
+        self,
+        item: FileItem,
+        root: Path,
+        overwrite: bool = False,
+        retries: int = 5,
+        retry_delay: float = 1.0,
+    ) -> Path:
         section = _clean_name(item.section, "Course files")
         activity = _clean_name(item.activity, "activity")
         directory = root / _clean_name(str(item.course_id), "course") / section
@@ -604,38 +612,120 @@ class MoodleClient:
             query.setdefault("token", self.token)
             url = parts._replace(query=urllib.parse.urlencode(query)).geturl()
 
-        with self._request(url, timeout=120) as response:
-            filename = _filename_from_headers(response.headers, response.geturl(), activity)
-            destination = directory / filename
-            if destination.exists() and not overwrite:
-                return destination
-            temporary = destination.with_name(destination.name + ".part")
-            total = response.headers.get("Content-Length")
-            expected = int(total) if total and total.isdigit() else None
-            downloaded = 0
-            started = time.monotonic()
-            with temporary.open("wb") as output:
-                while True:
-                    chunk = response.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    output.write(chunk)
-                    downloaded += len(chunk)
-                    if sys.stderr.isatty():
-                        if expected:
-                            status = f"{downloaded / expected:6.1%}"
-                        else:
-                            status = f"{downloaded / 1024 / 1024:7.1f} MiB"
-                        print(f"\r  {status}  {filename[:60]}", end="", file=sys.stderr, flush=True)
-            if expected is not None and downloaded != expected:
-                temporary.unlink(missing_ok=True)
-                raise MoodleError(f"incomplete download for {filename}: got {downloaded} of {expected} bytes")
-            temporary.replace(destination)
-            if sys.stderr.isatty():
-                elapsed = max(time.monotonic() - started, 0.01)
-                rate = downloaded / 1024 / 1024 / elapsed
-                print(f"\r  done {downloaded / 1024 / 1024:7.1f} MiB ({rate:.1f} MiB/s)  {filename}", file=sys.stderr)
+        suggested_filename = _clean_name(item.filename, activity)
+        destination = directory / suggested_filename
+        if destination.exists() and not overwrite:
             return destination
+        temporary = destination.with_name(destination.name + ".part")
+        if overwrite:
+            temporary.unlink(missing_ok=True)
+
+        expected_total = item.filesize
+        started = time.monotonic()
+        retry_number = 0
+        while True:
+            resume_at = temporary.stat().st_size if temporary.exists() else 0
+            headers: dict[str, str] = {}
+            if resume_at:
+                headers["Range"] = f"bytes={resume_at}-"
+            try:
+                with self._request(url, headers=headers, timeout=120) as response:
+                    status_code = getattr(response, "status", response.getcode())
+                    response_filename = _filename_from_headers(response.headers, response.geturl(), activity)
+                    if not temporary.exists() and response_filename != suggested_filename:
+                        destination = directory / response_filename
+                        if destination.exists() and not overwrite:
+                            return destination
+                        temporary = destination.with_name(destination.name + ".part")
+                        resume_at = temporary.stat().st_size if temporary.exists() else 0
+
+                    content_range = response.headers.get("Content-Range", "")
+                    range_match = re.fullmatch(r"bytes\s+(\d+)-(\d+)/(\d+|\*)", content_range.strip(), flags=re.I)
+                    if resume_at and status_code == 206:
+                        if not range_match or int(range_match.group(1)) != resume_at:
+                            raise MoodleError("server returned an unexpected byte range")
+                        if range_match.group(3) != "*":
+                            expected_total = int(range_match.group(3))
+                        file_mode = "ab"
+                        downloaded = resume_at
+                    elif resume_at and status_code == 200:
+                        print(
+                            f"warning: server did not honor resume for {destination.name}; restarting this file",
+                            file=sys.stderr,
+                        )
+                        file_mode = "wb"
+                        downloaded = 0
+                        resume_at = 0
+                    else:
+                        file_mode = "wb"
+                        downloaded = 0
+
+                    content_length = response.headers.get("Content-Length", "")
+                    if expected_total is None and content_length.isdigit():
+                        expected_total = downloaded + int(content_length)
+
+                    with temporary.open(file_mode) as output:
+                        while True:
+                            try:
+                                chunk = response.read(1024 * 1024)
+                            except http.client.IncompleteRead as exc:
+                                if exc.partial:
+                                    output.write(exc.partial)
+                                    downloaded += len(exc.partial)
+                                    output.flush()
+                                raise
+                            if not chunk:
+                                break
+                            output.write(chunk)
+                            downloaded += len(chunk)
+                            if sys.stderr.isatty():
+                                if expected_total:
+                                    progress = f"{downloaded / expected_total:6.1%}"
+                                else:
+                                    progress = f"{downloaded / 1024 / 1024:7.1f} MiB"
+                                print(
+                                    f"\r  {progress}  {destination.name[:60]}",
+                                    end="",
+                                    file=sys.stderr,
+                                    flush=True,
+                                )
+                    if expected_total is not None and downloaded != expected_total:
+                        raise MoodleError(
+                            f"connection closed early at {downloaded} of {expected_total} bytes"
+                        )
+                temporary.replace(destination)
+                if sys.stderr.isatty():
+                    elapsed = max(time.monotonic() - started, 0.01)
+                    rate = downloaded / 1024 / 1024 / elapsed
+                    print(
+                        f"\r  done {downloaded / 1024 / 1024:7.1f} MiB ({rate:.1f} MiB/s)  {destination.name}",
+                        file=sys.stderr,
+                    )
+                return destination
+            except (
+                MoodleError,
+                http.client.IncompleteRead,
+                http.client.RemoteDisconnected,
+                ConnectionError,
+                TimeoutError,
+                OSError,
+            ) as exc:
+                retry_number += 1
+                if retry_number > retries:
+                    saved = temporary.stat().st_size if temporary.exists() else 0
+                    raise MoodleError(
+                        f"download failed after {retries + 1} attempts; "
+                        f"kept {saved / 1024 / 1024:.1f} MiB in {temporary} ({exc})"
+                    ) from exc
+                saved = temporary.stat().st_size if temporary.exists() else 0
+                delay = min(retry_delay * (2 ** (retry_number - 1)), 15.0)
+                print(
+                    f"\n  connection interrupted; retry {retry_number}/{retries} "
+                    f"from {saved / 1024 / 1024:.1f} MiB in {delay:g}s",
+                    file=sys.stderr,
+                )
+                if delay:
+                    time.sleep(delay)
 
 
 def _env_value(args: argparse.Namespace, key: str) -> str:
@@ -845,6 +935,7 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("course_id", type=int)
     download_parser.add_argument("--output", type=Path, default=Path("downloads"))
     download_parser.add_argument("--overwrite", action="store_true")
+    download_parser.add_argument("--retries", type=int, default=5, help="retry interrupted files (default: 5)")
     return parser
 
 
@@ -905,7 +996,12 @@ def main(argv: list[str] | None = None) -> int:
         downloaded: list[str] = []
         for number, item in enumerate(files, 1):
             print(f"[{number}/{len(files)}] {item.activity}: {item.filename}", file=sys.stderr)
-            path = client.download(item, args.output, overwrite=args.overwrite)
+            path = client.download(
+                item,
+                args.output,
+                overwrite=args.overwrite,
+                retries=max(args.retries, 0),
+            )
             downloaded.append(str(path))
         if args.json:
             print(json.dumps(downloaded, ensure_ascii=False, indent=2))
