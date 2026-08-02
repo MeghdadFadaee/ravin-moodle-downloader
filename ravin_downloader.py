@@ -19,6 +19,7 @@ import mimetypes
 import os
 import re
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -32,6 +33,13 @@ from typing import Any, Iterable
 DEFAULT_SITE = "https://training.ravinacademy.com"
 USER_AGENT = "RavinCourseDownloader/1.0 (+personal Moodle client)"
 DOWNLOADABLE_MODULES = {"resource", "folder", "page", "book"}
+DEFAULT_ENV_FILE = Path(__file__).resolve().with_name(".env")
+ENV_KEYS = {
+    "username": "RAVIN_USERNAME",
+    "password": "RAVIN_PASSWORD",
+    "user_agent": "RAVIN_USER_AGENT",
+    "cookie": "RAVIN_COOKIE",
+}
 
 
 class MoodleError(RuntimeError):
@@ -629,9 +637,13 @@ class MoodleClient:
             return destination
 
 
-def _credentials(args: argparse.Namespace) -> tuple[str, str]:
-    username = args.username or os.environ.get("RAVIN_USERNAME")
-    password = os.environ.get("RAVIN_PASSWORD")
+def _env_value(args: argparse.Namespace, key: str) -> str:
+    return os.environ.get(key) or args.env_values.get(key, "")
+
+
+def _credentials(args: argparse.Namespace, *, fresh: bool = False) -> tuple[str, str]:
+    username = "" if fresh else args.username or _env_value(args, ENV_KEYS["username"])
+    password = "" if fresh else _env_value(args, ENV_KEYS["password"])
     if not username:
         username = input("LMS username: ").strip()
     if not password:
@@ -641,9 +653,98 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str]:
     return username, password
 
 
-def _browser_session(args: argparse.Namespace) -> tuple[str, str]:
-    user_agent = args.browser_user_agent or os.environ.get("RAVIN_USER_AGENT", "")
-    cookie_header = os.environ.get("RAVIN_COOKIE", "")
+def _load_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        print(f"warning: could not read {path} ({exc})", file=sys.stderr)
+        return {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[7:].lstrip()
+        key, separator, raw_value = stripped.partition("=")
+        key = key.strip()
+        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            continue
+        raw_value = raw_value.strip()
+        try:
+            if raw_value.startswith('"') and raw_value.endswith('"'):
+                value = json.loads(raw_value)
+            elif raw_value.startswith("'") and raw_value.endswith("'"):
+                value = raw_value[1:-1]
+            else:
+                value = raw_value
+        except json.JSONDecodeError:
+            value = raw_value.strip('"')
+        values[key] = value
+    return values
+
+
+def _save_env_values(path: Path, updates: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    except OSError as exc:
+        raise MoodleError(f"could not read {path}: {exc}") from exc
+    rendered = {key: f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in updates.items()}
+    output_lines: list[str] = []
+    written: set[str] = set()
+    assignment = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
+    for line in existing_lines:
+        match = assignment.match(line)
+        key = match.group(1) if match else ""
+        if key in rendered:
+            if key not in written:
+                output_lines.append(rendered[key])
+                written.add(key)
+            continue
+        output_lines.append(line)
+    for key, line in rendered.items():
+        if key not in written:
+            output_lines.append(line)
+    payload = "\n".join(output_lines).rstrip() + "\n"
+    temporary_name = ""
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_name = temporary.name
+            temporary.write(payload)
+        os.chmod(temporary_name, 0o600)
+        os.replace(temporary_name, path)
+        os.chmod(path, 0o600)
+    finally:
+        if temporary_name:
+            try:
+                Path(temporary_name).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def _browser_session_values(args: argparse.Namespace, *, fresh: bool = False) -> tuple[str, str] | None:
+    if fresh:
+        return None
+    user_agent = args.browser_user_agent or _env_value(args, ENV_KEYS["user_agent"])
+    cookie_header = _env_value(args, ENV_KEYS["cookie"])
+    if user_agent and cookie_header:
+        return user_agent, cookie_header
+    return None
+
+
+def _prompt_browser_session(args: argparse.Namespace, *, fresh: bool = False) -> tuple[str, str]:
+    stored = _browser_session_values(args, fresh=fresh)
+    user_agent, cookie_header = stored or ("", "")
     if not user_agent:
         user_agent = input("Browser User-Agent header: ").strip()
     if not cookie_header:
@@ -651,6 +752,47 @@ def _browser_session(args: argparse.Namespace) -> tuple[str, str]:
     if not user_agent or not cookie_header:
         raise MoodleError("both the browser User-Agent and Cookie headers are required")
     return user_agent, cookie_header
+
+
+def _authenticate_browser_session(
+    args: argparse.Namespace,
+    saved: tuple[str, str] | None = None,
+) -> tuple[MoodleClient, str]:
+    from_saved = saved is not None and not args.refresh_session
+    user_agent, cookie_header = saved if from_saved else _prompt_browser_session(args)
+    client = MoodleClient(
+        args.site,
+        cookie_header=cookie_header,
+        browser_user_agent=user_agent,
+    )
+    try:
+        mode = client.authenticate()
+    except MoodleError as exc:
+        if not from_saved:
+            raise
+        print(f"Saved browser session is no longer valid ({exc}).", file=sys.stderr)
+        print("Please paste fresh headers from a logged-in browser request.", file=sys.stderr)
+        user_agent, cookie_header = _prompt_browser_session(args, fresh=True)
+        client = MoodleClient(
+            args.site,
+            cookie_header=cookie_header,
+            browser_user_agent=user_agent,
+        )
+        mode = client.authenticate()
+    _save_env_values(
+        args.env_file,
+        {
+            ENV_KEYS["user_agent"]: user_agent,
+            ENV_KEYS["cookie"]: cookie_header,
+        },
+    )
+    args.env_values.update(
+        {
+            ENV_KEYS["user_agent"]: user_agent,
+            ENV_KEYS["cookie"]: cookie_header,
+        }
+    )
+    return client, mode
 
 
 def _format_size(size: int | None) -> str:
@@ -679,6 +821,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--browser-user-agent",
         help="User-Agent copied from the logged-in browser; otherwise prompted",
     )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=DEFAULT_ENV_FILE,
+        help=f"credentials and browser-session file (default: {DEFAULT_ENV_FILE})",
+    )
+    parser.add_argument(
+        "--refresh-session",
+        action="store_true",
+        help="ignore the saved browser session and ask for fresh headers",
+    )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -696,17 +849,33 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.browser_session:
-            browser_user_agent, cookie_header = _browser_session(args)
-            client = MoodleClient(
-                args.site,
-                cookie_header=cookie_header,
-                browser_user_agent=browser_user_agent,
-            )
+        args.env_values = _load_env_file(args.env_file)
+        saved_session = _browser_session_values(args, fresh=args.refresh_session)
+        if args.browser_session or args.refresh_session or saved_session is not None:
+            client, mode = _authenticate_browser_session(args, saved_session)
         else:
             username, password = _credentials(args)
+            _save_env_values(
+                args.env_file,
+                {
+                    ENV_KEYS["username"]: username,
+                    ENV_KEYS["password"]: password,
+                },
+            )
+            args.env_values.update(
+                {
+                    ENV_KEYS["username"]: username,
+                    ENV_KEYS["password"]: password,
+                }
+            )
             client = MoodleClient(args.site, username, password, web_only=args.web_only)
-        mode = client.authenticate()
+            try:
+                mode = client.authenticate()
+            except MoodleError as exc:
+                if "cloudflare requires a real browser session" not in str(exc).casefold():
+                    raise
+                print("Cloudflare blocked password login; switching to a saved browser session.", file=sys.stderr)
+                client, mode = _authenticate_browser_session(args)
         print(f"Authenticated using {mode}.", file=sys.stderr)
 
         if args.command == "courses":

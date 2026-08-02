@@ -45,13 +45,28 @@ Ravin Academy currently puts a Cloudflare browser check in front of both Moodle 
 python3 ravin_downloader.py --browser-session courses
 ```
 
-Paste the User-Agent normally and the Cookie header into the hidden prompt. To list and download the detected course:
+Paste the User-Agent normally and the Cookie header into the hidden prompt. After the headers are validated, they are saved in `.env` with owner-only permissions and ignored by Git. The same file can contain all four values:
 
-```bash
-python3 ravin_downloader.py --browser-session files 44
-python3 ravin_downloader.py --browser-session download 44
+```dotenv
+RAVIN_USERNAME="your username"
+RAVIN_PASSWORD="your password"
+RAVIN_USER_AGENT="the complete browser User-Agent"
+RAVIN_COOKIE="the complete browser Cookie header"
 ```
 
-The headers are kept in memory only. They are not displayed or saved. Never send the Cookie value to another person; it temporarily grants access to your signed-in LMS session. If Cloudflare rejects it, copy both values again from the same fresh browser request.
+Values entered at the script's prompts are written or updated automatically. Later commands reuse `.env`, so you can simply run:
+
+```bash
+python3 ravin_downloader.py files 44
+python3 ravin_downloader.py download 44
+```
+
+The saved session is checked on every run. When it expires or Cloudflare rejects it, the tool asks for fresh headers and replaces the saved copy. You can force that refresh yourself with:
+
+```bash
+python3 ravin_downloader.py --refresh-session courses
+```
+
+Never send `.env`, your password, or its Cookie value to another person; they grant access to your LMS account or signed-in session.
 
 The tool only requests content that the supplied account is already authorized to view. It does not bypass enrollment, permissions, DRM, or access controls.

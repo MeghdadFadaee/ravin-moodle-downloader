@@ -1,5 +1,8 @@
 import email.message
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from ravin_downloader import (
     FileItem,
@@ -8,7 +11,9 @@ from ravin_downloader import (
     _clean_name,
     _filename_from_headers,
     _is_cloudflare_challenge,
+    _load_env_file,
     _parse_moodle_config,
+    _save_env_values,
     _unique,
 )
 
@@ -54,6 +59,29 @@ class ParserTests(unittest.TestCase):
     def test_detects_cloudflare_page(self):
         self.assertTrue(_is_cloudflare_challenge('<link href="/cdn-cgi/assets/css/static.css">'))
         self.assertFalse(_is_cloudflare_challenge("<html><body>Moodle login</body></html>"))
+
+    def test_saves_and_loads_private_env_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("UNRELATED='keep me'\nRAVIN_USERNAME=old\n", encoding="utf-8")
+            _save_env_values(
+                path,
+                {
+                    "RAVIN_USERNAME": "0935",
+                    "RAVIN_PASSWORD": 'pass"word',
+                    "RAVIN_COOKIE": "MoodleSession=secret; cf_clearance=value",
+                },
+            )
+            self.assertEqual(
+                _load_env_file(path),
+                {
+                    "UNRELATED": "keep me",
+                    "RAVIN_USERNAME": "0935",
+                    "RAVIN_PASSWORD": 'pass"word',
+                    "RAVIN_COOKIE": "MoodleSession=secret; cf_clearance=value",
+                },
+            )
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":
