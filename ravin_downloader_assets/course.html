@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browse the resources in a downloaded course.">
+  <title>Course · Learning Library</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body data-page="course">
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Back to Learning Library">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span>Learning Library</span>
+    </a>
+    <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle color theme">◐</button>
+  </header>
+
+  <main>
+    <nav class="breadcrumbs" aria-label="Breadcrumb">
+      <a href="index.html">Library</a><span aria-hidden="true">/</span><span id="breadcrumbCourse">Course</span>
+    </nav>
+
+    <section class="course-hero" aria-labelledby="courseTitle">
+      <div class="course-heading">
+        <p class="eyebrow" id="courseCode">Course</p>
+        <h1 id="courseTitle">Loading course…</h1>
+        <p class="hero-copy" id="courseSummary"></p>
+        <a class="hero-source" id="courseSource" href="#" target="_blank" rel="noopener">Open in LMS ↗</a>
+      </div>
+      <div class="progress-panel">
+        <div class="progress-ring" id="courseProgress" style="--progress: 0">
+          <span id="coursePercent">0%</span>
+        </div>
+        <div><strong id="courseDownloaded">0 of 0</strong><span>files available offline</span></div>
+      </div>
+    </section>
+
+    <section class="course-toolbar" aria-label="Resource controls">
+      <label class="search-box resource-search">
+        <span aria-hidden="true">⌕</span>
+        <span class="sr-only">Search lessons and files</span>
+        <input id="resourceSearch" type="search" placeholder="Search lessons and files" autocomplete="off">
+      </label>
+      <div class="filter-group" id="resourceFilters" aria-label="Filter resources">
+        <button class="filter-chip active" type="button" data-filter="all">All</button>
+        <button class="filter-chip" type="button" data-filter="video">Videos</button>
+        <button class="filter-chip" type="button" data-filter="document">Documents</button>
+        <button class="filter-chip" type="button" data-filter="downloaded">Offline</button>
+        <button class="filter-chip" type="button" data-filter="missing">Missing</button>
+      </div>
+    </section>
+
+    <div class="section-list" id="sectionList" aria-live="polite"></div>
+    <div class="empty-state" id="emptyResources" hidden>
+      <strong>No matching resources</strong>
+      <span>Change the search or filter to see more.</span>
+    </div>
+  </main>
+
+  <dialog class="media-dialog" id="mediaDialog">
+    <div class="dialog-heading">
+      <div><p class="eyebrow">Now playing</p><h2 id="mediaTitle"></h2></div>
+      <button class="icon-button" id="closeMedia" type="button" aria-label="Close player">×</button>
+    </div>
+    <video id="mediaPlayer" controls preload="metadata"></video>
+  </dialog>
+
+  <footer>
+    <a href="index.html">← All courses</a>
+    <span id="generatedAt"></span>
+  </footer>
+</body>
+</html>

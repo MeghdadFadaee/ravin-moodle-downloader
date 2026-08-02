@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented here.
 
+## 0.3.0 - 2026-08-02
+
+- Add a generated static Learning Library with responsive course and resource pages.
+- Export rich course, chapter, activity, file, completion, and local download metadata to `library/courses.json`.
+- Add course search, file filters, video playback, dark mode, and local completion tracking.
+- Preserve Moodle chapter ordering and include forums, quizzes, live classes, and course links.
+- Stream local media with HTTP byte-range support for efficient seeking.
+- Add `library` and `serve-library` commands while keeping generated enrollment data private.
+
 ## 0.2.0 - 2026-08-02
 
 - Add a persistent, interactive installed-browser login flow that handles Cloudflare normally.

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A private, local library for downloaded course materials.">
+  <title>Learning Library</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body data-page="index">
+  <header class="topbar">
+    <a class="brand" href="index.html" aria-label="Learning Library home">
+      <span class="brand-mark" aria-hidden="true">R</span>
+      <span>Learning Library</span>
+    </a>
+    <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle color theme">◐</button>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="pageTitle">
+      <div>
+        <p class="eyebrow">Your offline study space</p>
+        <h1 id="pageTitle">Pick up where you left off.</h1>
+        <p class="hero-copy">Every course, lesson, video, and document—organized around the work you want to finish.</p>
+      </div>
+      <div class="hero-orbit" aria-hidden="true">
+        <span class="orbit-number" id="heroPercent">0%</span>
+        <span class="orbit-label">available offline</span>
+      </div>
+    </section>
+
+    <section class="stat-grid" aria-label="Library summary">
+      <article class="stat-card"><span class="stat-label">Courses</span><strong id="courseCount">—</strong></article>
+      <article class="stat-card"><span class="stat-label">Resources</span><strong id="resourceCount">—</strong></article>
+      <article class="stat-card"><span class="stat-label">Downloaded</span><strong id="downloadedCount">—</strong></article>
+      <article class="stat-card"><span class="stat-label">Library size</span><strong id="librarySize">—</strong></article>
+    </section>
+
+    <section class="library-section" aria-labelledby="coursesHeading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Course collection</p>
+          <h2 id="coursesHeading">Your courses</h2>
+        </div>
+        <label class="search-box">
+          <span aria-hidden="true">⌕</span>
+          <span class="sr-only">Search courses</span>
+          <input id="courseSearch" type="search" placeholder="Search courses" autocomplete="off">
+        </label>
+      </div>
+      <div class="course-grid" id="courseGrid" aria-live="polite"></div>
+      <div class="empty-state" id="emptyCourses" hidden>
+        <strong>No matching courses</strong>
+        <span>Try a different search phrase.</span>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Private library generated from your authorized LMS access.</span>
+    <span id="generatedAt"></span>
+  </footer>
+</body>
+</html>

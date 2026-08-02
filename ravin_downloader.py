@@ -11,10 +11,13 @@ Only Python's standard library is required.
 from __future__ import annotations
 
 import argparse
+import functools
 import getpass
+import hashlib
 import html
 import http.cookiejar
 import http.client
+import http.server
 import json
 import mimetypes
 import os
@@ -27,14 +30,16 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from html.parser import HTMLParser
+from importlib import resources
 from pathlib import Path
 from typing import Any, Iterable
 
 
 DEFAULT_SITE = "https://training.ravinacademy.com"
 DEFAULT_RAVIN_LOGIN_URL = "https://lms.ravinacademy.com/"
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 USER_AGENT = f"RavinMoodleDownloader/{__version__} (+personal Moodle client)"
 DOWNLOADABLE_MODULES = {"resource", "folder", "page", "book"}
 DEFAULT_ENV_FILE = Path.cwd() / ".env"
@@ -45,6 +50,7 @@ ENV_KEYS = {
     "user_agent": "RAVIN_USER_AGENT",
     "cookie": "RAVIN_COOKIE",
 }
+LIBRARY_ASSETS = ("index.html", "course.html", "styles.css", "app.js")
 
 
 class MoodleError(RuntimeError):
@@ -67,6 +73,13 @@ class FileItem:
     url: str
     mimetype: str = ""
     filesize: int | None = None
+    chapter: str = ""
+    section_id: int | None = None
+    section_number: int | None = None
+    activity_id: int | None = None
+    activity_type: str = ""
+    activity_position: int | None = None
+    description: str = ""
 
 
 class _FormParser(HTMLParser):
@@ -145,6 +158,114 @@ class _LinkParser(HTMLParser):
             self._in_title = False
             self.title = " ".join("".join(self._title_text).split())
 
+
+class _CourseStructureParser(HTMLParser):
+    """Collect Moodle sections and activities from a course page."""
+
+    VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+    def __init__(self, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
+        self.sections: list[dict[str, Any]] = []
+        self._section: dict[str, Any] | None = None
+        self._activity: dict[str, Any] | None = None
+        self._markers: list[str | None] = []
+        self._captures: list[tuple[int, dict[str, Any], str]] = []
+
+    @staticmethod
+    def _integer(value: str | None) -> int | None:
+        try:
+            return int(value or "")
+        except ValueError:
+            return None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = dict(attrs)
+        classes = set((values.get("class") or "").split())
+        marker: str | None = None
+        if (
+            tag == "li"
+            and values.get("data-for") == "section"
+            and (values.get("id") or "").startswith("section-")
+        ):
+            self._section = {
+                "id": self._integer(values.get("data-id")),
+                "number": self._integer(values.get("data-sectionid") or values.get("data-number")),
+                "position": len(self.sections) + 1,
+                "name": " ".join((values.get("data-sectionname") or "Section").split()),
+                "summary": "",
+                "activities": [],
+            }
+            self.sections.append(self._section)
+            marker = "section"
+        elif tag == "li" and self._section is not None and values.get("data-for") == "cmitem":
+            module_type = next(
+                (value.removeprefix("modtype_") for value in classes if value.startswith("modtype_")),
+                "activity",
+            )
+            self._activity = {
+                "id": self._integer(values.get("data-id")),
+                "position": len(self._section["activities"]) + 1,
+                "name": "",
+                "type": module_type,
+                "url": "",
+                "description": "",
+                "badge": "",
+                "lms_completed": None,
+            }
+            self._section["activities"].append(self._activity)
+            marker = "activity"
+
+        if tag not in self.VOID_TAGS:
+            self._markers.append(marker)
+        depth = len(self._markers)
+        if self._activity is not None:
+            activity_name = values.get("data-activityname")
+            if activity_name and not self._activity["name"]:
+                self._activity["name"] = " ".join(activity_name.split())
+            if tag == "a" and values.get("href") and "/mod/" in (values.get("href") or ""):
+                self._activity["url"] = urllib.parse.urljoin(self.base_url, values["href"] or "")
+            if "activity-description" in classes:
+                self._captures.append((depth, self._activity, "description"))
+            if "activitybadge" in classes:
+                self._captures.append((depth, self._activity, "badge"))
+            class_value = values.get("class") or ""
+            if "btn-subtle-success" in class_value:
+                self._activity["lms_completed"] = True
+        if self._section is not None and "summary" in classes:
+            self._captures.append((depth, self._section, "summary"))
+
+    def handle_endtag(self, _tag: str) -> None:
+        if _tag in self.VOID_TAGS:
+            return
+        depth = len(self._markers)
+        self._captures = [capture for capture in self._captures if capture[0] != depth]
+        if not self._markers:
+            return
+        marker = self._markers.pop()
+        if marker == "activity":
+            self._activity = None
+        elif marker == "section":
+            self._section = None
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+
+    def handle_data(self, data: str) -> None:
+        if not data.strip():
+            return
+        for _, target, field in self._captures:
+            target[field] = f"{target.get(field, '')} {data}".strip()
+
+    def result(self) -> list[dict[str, Any]]:
+        for section in self.sections:
+            section["summary"] = " ".join(section["summary"].split())
+            for activity in section["activities"]:
+                activity["name"] = " ".join((activity["name"] or activity["type"]).split())
+                activity["description"] = " ".join(activity["description"].split())
+                activity["badge"] = " ".join(activity["badge"].split())
+        return self.sections
 
 def _parse_moodle_config(page: str) -> dict[str, Any]:
     match = re.search(r"\bM\.cfg\s*=\s*", page)
@@ -256,6 +377,7 @@ class MoodleClient:
         self.user_id: int | None = None
         self.sesskey: str | None = None
         self.mode = ""
+        self._course_structure_cache: dict[int, list[dict[str, Any]]] = {}
 
     def _install_cookie_header(self, cookie_header: str) -> None:
         parsed_site = urllib.parse.urlparse(self.site)
@@ -519,9 +641,9 @@ class MoodleClient:
     def _list_files_api(self, course_id: int) -> list[FileItem]:
         sections = self.api_call("core_course_get_contents", courseid=course_id)
         files: list[FileItem] = []
-        for section in sections:
+        for section_position, section in enumerate(sections, 1):
             section_name = str(section.get("name") or f"Section {section.get('section', '')}")
-            for module in section.get("modules", []):
+            for activity_position, module in enumerate(section.get("modules", []), 1):
                 activity = str(module.get("name") or module.get("modname") or "activity")
                 for content in module.get("contents", []) or []:
                     file_url = content.get("fileurl")
@@ -536,12 +658,29 @@ class MoodleClient:
                             url=str(file_url),
                             mimetype=str(content.get("mimetype") or ""),
                             filesize=int(content["filesize"]) if content.get("filesize") is not None else None,
+                            chapter=section_name,
+                            section_id=int(section["id"]) if section.get("id") is not None else None,
+                            section_number=int(section["section"]) if section.get("section") is not None else section_position,
+                            activity_id=int(module["id"]) if module.get("id") is not None else None,
+                            activity_type=str(module.get("modname") or ""),
+                            activity_position=activity_position,
+                            description=re.sub(r"<[^>]+>", " ", str(module.get("description") or "")).strip(),
                         )
                     )
         return _unique(files)
 
     def _list_files_web(self, course_id: int) -> list[FileItem]:
         page, final_url, _ = self._read_text(f"/course/view.php?id={course_id}")
+        structure_parser = _CourseStructureParser(final_url)
+        structure_parser.feed(page)
+        structure = structure_parser.result()
+        self._course_structure_cache[course_id] = structure
+        activity_by_url: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+        for section in structure:
+            for activity_metadata in section["activities"]:
+                if activity_metadata["url"]:
+                    key = urllib.parse.urlsplit(activity_metadata["url"])._replace(fragment="").geturl()
+                    activity_by_url[key] = (section, activity_metadata)
         parser = _LinkParser(final_url)
         parser.feed(page)
         module_links: list[tuple[str, str]] = []
@@ -564,6 +703,9 @@ class MoodleClient:
             if module_key in seen_modules:
                 continue
             seen_modules.add(module_key)
+            metadata = activity_by_url.get(module_key)
+            if metadata:
+                activity = metadata[1]["name"] or activity
             separator = "&" if urllib.parse.urlparse(module_url).query else "?"
             inspect_url = module_url + separator + "redirect=0"
             try:
@@ -573,7 +715,7 @@ class MoodleClient:
                 continue
             content_type = headers.get_content_type() if hasattr(headers, "get_content_type") else ""
             if not (content_type.startswith("text/") or content_type in {"application/xhtml+xml", "application/xml"}):
-                files.append(self._web_file_item(course_id, "Course files", activity, module_final_url))
+                files.append(self._web_file_item(course_id, "Course files", activity, module_final_url, metadata))
                 continue
             module_parser = _LinkParser(module_final_url)
             module_parser.feed(module_page)
@@ -582,18 +724,44 @@ class MoodleClient:
             for candidate in candidates:
                 candidate_path = urllib.parse.urlparse(candidate).path
                 if "/pluginfile.php/" in candidate_path or "/webservice/pluginfile.php/" in candidate_path:
-                    files.append(self._web_file_item(course_id, "Course files", activity, candidate))
+                    files.append(self._web_file_item(course_id, "Course files", activity, candidate, metadata))
         return _unique(files)
 
-    def _web_file_item(self, course_id: int, section: str, activity: str, url: str) -> FileItem:
+    def _web_file_item(
+        self,
+        course_id: int,
+        section: str,
+        activity: str,
+        url: str,
+        metadata: tuple[dict[str, Any], dict[str, Any]] | None = None,
+    ) -> FileItem:
         path_name = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path)).name
+        section_metadata, activity_metadata = metadata or ({}, {})
         return FileItem(
             course_id=course_id,
             section=section,
             activity=activity or path_name,
             filename=path_name or _clean_name(activity),
             url=url,
+            chapter=str(section_metadata.get("name") or section),
+            section_id=section_metadata.get("id"),
+            section_number=section_metadata.get("number"),
+            activity_id=activity_metadata.get("id"),
+            activity_type=str(activity_metadata.get("type") or ""),
+            activity_position=activity_metadata.get("position"),
+            description=str(activity_metadata.get("description") or ""),
         )
+
+    def course_structure(self, course_id: int) -> list[dict[str, Any]]:
+        cached = self._course_structure_cache.get(course_id)
+        if cached is not None:
+            return cached
+        page, final_url, _ = self._read_text(f"/course/view.php?id={course_id}")
+        parser = _CourseStructureParser(final_url)
+        parser.feed(page)
+        structure = parser.result()
+        self._course_structure_cache[course_id] = structure
+        return structure
 
     def download(
         self,
@@ -1148,6 +1316,370 @@ def _format_size(size: int | None) -> str:
     return str(size)
 
 
+def _resource_kind(item: FileItem) -> str:
+    mimetype = item.mimetype.casefold()
+    suffix = Path(item.filename).suffix.casefold()
+    if mimetype.startswith("video/") or suffix in {".mp4", ".mkv", ".webm", ".mov", ".m4v"}:
+        return "video"
+    if mimetype.startswith("audio/") or suffix in {".mp3", ".m4a", ".wav", ".ogg", ".flac"}:
+        return "audio"
+    if (
+        mimetype.startswith("text/")
+        or mimetype in {"application/pdf", "application/msword"}
+        or suffix in {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".txt", ".md"}
+    ):
+        return "document"
+    if suffix in {".zip", ".rar", ".7z", ".tar", ".gz"}:
+        return "archive"
+    return "file"
+
+
+def _browser_path(path: Path, relative_to: Path) -> str:
+    relative = Path(os.path.relpath(path, relative_to))
+    return "/".join(
+        part if part in {".", ".."} else urllib.parse.quote(part)
+        for part in relative.parts
+    )
+
+
+def _local_resource(item: FileItem, downloads: Path) -> tuple[str, Path | None]:
+    directory = downloads / _clean_name(str(item.course_id), "course") / _clean_name(
+        item.section,
+        "Course files",
+    )
+    expected = directory / _clean_name(item.filename, _clean_name(item.activity, "activity"))
+    if expected.is_file():
+        return "downloaded", expected
+    partial = expected.with_name(expected.name + ".part")
+    if partial.is_file():
+        return "partial", partial
+    if directory.is_dir():
+        expected_name = expected.name.casefold()
+        matches = [path for path in directory.iterdir() if path.is_file() and path.name.casefold() == expected_name]
+        if len(matches) == 1:
+            return "downloaded", matches[0]
+    return "missing", None
+
+
+def _build_library_catalog(
+    client: MoodleClient,
+    downloads: Path,
+    output: Path,
+    selected_course_ids: Iterable[int] = (),
+) -> dict[str, Any]:
+    selected_ids = set(selected_course_ids)
+    available_courses = client.list_courses()
+    courses = [course for course in available_courses if not selected_ids or course.id in selected_ids]
+    missing_ids = selected_ids - {course.id for course in courses}
+    if missing_ids:
+        missing = ", ".join(str(course_id) for course_id in sorted(missing_ids))
+        raise MoodleError(f"course ID(s) not found in your enrollments: {missing}")
+
+    catalog_courses: list[dict[str, Any]] = []
+    total_files = 0
+    total_activities = 0
+    total_records = 0
+    total_downloaded = 0
+    total_downloaded_bytes = 0
+    for course in courses:
+        print(f"Reading course {course.id}: {course.fullname}", file=sys.stderr)
+        downloaded_count = 0
+        downloaded_bytes = 0
+        items = client.list_files(course.id)
+        try:
+            structure_method = getattr(client, "course_structure")
+            structure = structure_method(course.id)
+        except (AttributeError, MoodleError):
+            structure = []
+        consumed: set[int] = set()
+
+        def file_record(
+            item: FileItem,
+            item_index: int,
+            section_metadata: dict[str, Any] | None = None,
+            activity_metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            nonlocal downloaded_count, downloaded_bytes
+            section_metadata = section_metadata or {}
+            activity_metadata = activity_metadata or {}
+            status, local_path = _local_resource(item, downloads)
+            local_bytes = local_path.stat().st_size if local_path else 0
+            if status == "downloaded":
+                downloaded_count += 1
+                downloaded_bytes += local_bytes
+            stable_source = urllib.parse.urlsplit(item.url)._replace(query="", fragment="").geturl()
+            resource_id = hashlib.sha1(
+                f"{course.id}\0{stable_source}\0{item.filename}".encode("utf-8")
+            ).hexdigest()[:14]
+            title = activity_metadata.get("name") or re.sub(r"\s*فایل\s*$", "", item.activity).strip()
+            consumed.add(item_index)
+            return {
+                "id": resource_id,
+                "section": item.section,
+                "section_id": section_metadata.get("id", item.section_id),
+                "section_number": section_metadata.get("number", item.section_number),
+                "activity_id": activity_metadata.get("id", item.activity_id),
+                "activity_position": activity_metadata.get("position", item.activity_position),
+                "activity_type": activity_metadata.get("type", item.activity_type or "resource"),
+                "title": title or item.filename,
+                "description": activity_metadata.get("description") or item.description,
+                "badge": activity_metadata.get("badge") or Path(item.filename).suffix.removeprefix(".").upper(),
+                "filename": item.filename,
+                "extension": Path(item.filename).suffix.removeprefix(".").casefold(),
+                "kind": _resource_kind(item),
+                "mimetype": item.mimetype,
+                "status": status,
+                "size": local_bytes if status == "downloaded" else item.filesize,
+                "local_bytes": local_bytes,
+                "local_url": _browser_path(local_path, output) if status == "downloaded" and local_path else None,
+                "source_url": activity_metadata.get("url") or f"{client.site}/course/view.php?id={course.id}",
+                "lms_completed": activity_metadata.get("lms_completed"),
+            }
+
+        files_by_activity: dict[int, list[tuple[int, FileItem]]] = {}
+        for item_index, item in enumerate(items):
+            if item.activity_id is not None:
+                files_by_activity.setdefault(item.activity_id, []).append((item_index, item))
+
+        catalog_sections: list[dict[str, Any]] = []
+        activity_count = 0
+        for section in structure:
+            section_records: list[dict[str, Any]] = []
+            activities = section.get("activities", [])
+            activity_count += len(activities)
+            for activity in activities:
+                matches = files_by_activity.get(activity.get("id"), [])
+                if not matches:
+                    activity_name = re.sub(r"\s*فایل\s*$", "", str(activity.get("name") or "")).strip().casefold()
+                    matches = [
+                        (item_index, item)
+                        for item_index, item in enumerate(items)
+                        if item_index not in consumed
+                        and re.sub(r"\s*فایل\s*$", "", item.activity).strip().casefold() == activity_name
+                    ]
+                if matches:
+                    for item_index, item in matches:
+                        if item_index not in consumed:
+                            section_records.append(file_record(item, item_index, section, activity))
+                    continue
+                activity_type = str(activity.get("type") or "activity")
+                type_names = {
+                    "bigbluebuttonbn": "live class",
+                    "forum": "discussion",
+                    "quiz": "quiz",
+                    "url": "link",
+                    "resource": "resource",
+                }
+                section_records.append(
+                    {
+                        "id": f"activity-{activity.get('id') or hashlib.sha1(str(activity).encode()).hexdigest()[:10]}",
+                        "section": section.get("name") or "Course",
+                        "section_id": section.get("id"),
+                        "section_number": section.get("number"),
+                        "activity_id": activity.get("id"),
+                        "activity_position": activity.get("position"),
+                        "activity_type": activity_type,
+                        "title": activity.get("name") or activity_type,
+                        "description": activity.get("description") or "",
+                        "badge": activity.get("badge") or type_names.get(activity_type, activity_type),
+                        "filename": "",
+                        "extension": "",
+                        "kind": type_names.get(activity_type, "activity"),
+                        "mimetype": "",
+                        "status": "online",
+                        "size": None,
+                        "local_bytes": 0,
+                        "local_url": None,
+                        "source_url": activity.get("url") or f"{client.site}/course/view.php?id={course.id}",
+                        "lms_completed": activity.get("lms_completed"),
+                    }
+                )
+            catalog_sections.append(
+                {
+                    "id": section.get("id"),
+                    "number": section.get("number"),
+                    "position": section.get("position"),
+                    "name": section.get("name") or "Section",
+                    "summary": section.get("summary") or "",
+                    "activity_count": len(activities),
+                    "items": section_records,
+                }
+            )
+
+        for item_index, item in enumerate(items):
+            if item_index in consumed:
+                continue
+            chapter_name = item.chapter or item.section
+            target = next((section for section in catalog_sections if section["name"] == chapter_name), None)
+            if target is None:
+                target = {
+                    "id": item.section_id,
+                    "number": item.section_number,
+                    "position": len(catalog_sections) + 1,
+                    "name": chapter_name,
+                    "summary": "",
+                    "activity_count": 0,
+                    "items": [],
+                }
+                catalog_sections.append(target)
+            target["items"].append(file_record(item, item_index))
+
+        if not structure:
+            activity_count = len(items)
+            for section in catalog_sections:
+                section["activity_count"] = len(section["items"])
+        file_count = len(items)
+        record_count = sum(len(section["items"]) for section in catalog_sections)
+        type_counts: dict[str, int] = {}
+        for section in catalog_sections:
+            for record in section["items"]:
+                type_counts[record["kind"]] = type_counts.get(record["kind"], 0) + 1
+        catalog_courses.append(
+            {
+                "id": course.id,
+                "fullname": course.fullname,
+                "shortname": course.shortname,
+                "source_url": f"{client.site}/course/view.php?id={course.id}",
+                "section_count": len(catalog_sections),
+                "activity_count": activity_count,
+                "record_count": record_count,
+                "file_count": file_count,
+                "downloaded_count": downloaded_count,
+                "downloaded_bytes": downloaded_bytes,
+                "type_counts": type_counts,
+                "sections": catalog_sections,
+            }
+        )
+        total_files += file_count
+        total_activities += activity_count
+        total_records += record_count
+        total_downloaded += downloaded_count
+        total_downloaded_bytes += downloaded_bytes
+
+    return {
+        "schema_version": 2,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "stats": {
+            "courses": len(catalog_courses),
+            "files": total_files,
+            "activities": total_activities,
+            "records": total_records,
+            "downloaded_files": total_downloaded,
+            "downloaded_bytes": total_downloaded_bytes,
+        },
+        "courses": catalog_courses,
+    }
+
+
+def _write_library_site(output: Path, catalog: dict[str, Any]) -> Path:
+    output.mkdir(parents=True, exist_ok=True)
+    asset_root = resources.files("ravin_downloader_assets")
+    for name in LIBRARY_ASSETS:
+        (output / name).write_bytes(asset_root.joinpath(name).read_bytes())
+    catalog_path = output / "courses.json"
+    catalog_path.write_text(
+        json.dumps(catalog, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return catalog_path
+
+
+class _RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
+    """Static-file handler with byte ranges for efficient local media playback."""
+
+    _byte_range: tuple[int, int] | None = None
+
+    def send_head(self) -> Any:
+        self._byte_range = None
+        path = self.translate_path(self.path)
+        if os.path.isdir(path):
+            return super().send_head()
+        try:
+            source = open(path, "rb")
+        except OSError:
+            self.send_error(404, "File not found")
+            return None
+        try:
+            size = os.fstat(source.fileno()).st_size
+            range_header = self.headers.get("Range", "")
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if match and (match.group(1) or match.group(2)):
+                if match.group(1):
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else size - 1
+                else:
+                    suffix_length = int(match.group(2))
+                    start = max(size - suffix_length, 0)
+                    end = size - 1
+                if start >= size or start > end:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.end_headers()
+                    source.close()
+                    return None
+                end = min(end, size - 1)
+                self._byte_range = (start, end)
+                self.send_response(206)
+                self.send_header("Content-Type", self.guess_type(path))
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+                self.send_header("Content-Length", str(end - start + 1))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Last-Modified", self.date_time_string(os.fstat(source.fileno()).st_mtime))
+                self.end_headers()
+                return source
+            self.send_response(200)
+            self.send_header("Content-Type", self.guess_type(path))
+            self.send_header("Content-Length", str(size))
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Last-Modified", self.date_time_string(os.fstat(source.fileno()).st_mtime))
+            self.end_headers()
+            return source
+        except Exception:
+            source.close()
+            raise
+
+    def copyfile(self, source: Any, outputfile: Any) -> None:
+        if self._byte_range is None:
+            shutil.copyfileobj(source, outputfile)
+            return
+        start, end = self._byte_range
+        source.seek(start)
+        remaining = end - start + 1
+        while remaining:
+            chunk = source.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            outputfile.write(chunk)
+            remaining -= len(chunk)
+
+
+def _serve_library(site_dir: Path, downloads: Path, host: str, port: int, open_browser: bool) -> None:
+    site_dir = site_dir.expanduser().resolve()
+    downloads = downloads.expanduser().resolve()
+    if not (site_dir / "index.html").is_file() or not (site_dir / "courses.json").is_file():
+        raise MoodleError(f"{site_dir} is not built yet; run `ravin-downloader library` first")
+    if site_dir.parent != downloads.parent:
+        raise MoodleError("the site directory and downloads directory must share the same parent")
+    handler = functools.partial(_RangeRequestHandler, directory=str(site_dir.parent))
+    try:
+        server = http.server.ThreadingHTTPServer((host, port), handler)
+    except OSError as exc:
+        raise MoodleError(f"could not start the library server on {host}:{port}: {exc}") from exc
+    display_host = "localhost" if host in {"127.0.0.1", "0.0.0.0", "::"} else host
+    site_name = urllib.parse.quote(site_dir.name)
+    url = f"http://{display_host}:{server.server_port}/{site_name}/"
+    print(f"Learning Library: {url}")
+    print("Press Ctrl+C to stop.")
+    if open_browser:
+        import webbrowser
+
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="List and download your Ravin Academy Moodle course files.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -1216,12 +1748,28 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--output", type=Path, default=Path("downloads"))
     download_parser.add_argument("--overwrite", action="store_true")
     download_parser.add_argument("--retries", type=int, default=5, help="retry interrupted files (default: 5)")
+    library_parser = subparsers.add_parser(
+        "library",
+        help="generate a private static course library and courses.json",
+    )
+    library_parser.add_argument("course_ids", nargs="*", type=int, help="optional course IDs; defaults to all courses")
+    library_parser.add_argument("--output", type=Path, default=Path("library"), help="generated site directory")
+    library_parser.add_argument("--downloads", type=Path, default=Path("downloads"), help="download root to index")
+    serve_parser = subparsers.add_parser("serve-library", help="serve the generated library locally")
+    serve_parser.add_argument("--site-dir", type=Path, default=Path("library"), help="generated site directory")
+    serve_parser.add_argument("--downloads", type=Path, default=Path("downloads"), help="download root")
+    serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address (default: 127.0.0.1)")
+    serve_parser.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
+    serve_parser.add_argument("--open", action="store_true", help="open the library in your default browser")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "serve-library":
+            _serve_library(args.site_dir, args.downloads, args.host, args.port, args.open)
+            return 0
         args.env_values = _load_env_file(args.env_file)
         if args.command == "login":
             client, mode = _authenticate_browser_session(args)
@@ -1263,6 +1811,15 @@ def main(argv: list[str] | None = None) -> int:
                 for course in courses:
                     suffix = f" [{course.shortname}]" if course.shortname else ""
                     print(f"{course.id:>6}  {course.fullname}{suffix}")
+            return 0
+
+        if args.command == "library":
+            output = args.output.expanduser().resolve()
+            downloads = args.downloads.expanduser().resolve()
+            catalog = _build_library_catalog(client, downloads, output, args.course_ids)
+            catalog_path = _write_library_site(output, catalog)
+            print(f"Generated {catalog_path} and the static library pages.")
+            print("View it with: ravin-downloader serve-library --open")
             return 0
 
         files = client.list_files(args.course_id)

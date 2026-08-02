@@ -31,6 +31,8 @@ ravin-downloader login
 ravin-downloader courses
 ravin-downloader files COURSE_ID
 ravin-downloader download COURSE_ID
+ravin-downloader library
+ravin-downloader serve-library --open
 ```
 
 Files are saved under `downloads/<course-id>/...`. Existing completed files are skipped; interrupted downloads use a temporary `.part` suffix and resume automatically with HTTP byte-range requests. Use `--overwrite` if you want to replace existing files, or `--retries` to change the default five retries per file.
@@ -81,6 +83,28 @@ Later commands reuse `.env`, so you can simply run:
 ravin-downloader files 44
 ravin-downloader download 44
 ```
+
+## Static course library
+
+Build a clean local website from your enrolled courses and downloaded files:
+
+```bash
+ravin-downloader library
+ravin-downloader serve-library --open
+```
+
+The first command refreshes `library/courses.json` from the LMS and copies the static HTML, CSS, and JavaScript pages into `library/`. The catalog preserves the LMS chapter order and includes section IDs and summaries, every activity and its type, lesson descriptions, LMS completion state, original filenames, MIME types, sizes, extensions, local download status, and safe LMS activity links. It does not copy the large course files. The pages link to the originals under `downloads/`, keeping their original filenames.
+
+The second command serves both directories locally at `http://localhost:8765/library/`. The library includes course search, true chapter grouping, offline progress, resource filters, efficient seekable video playback, document links, online LMS activities, dark mode, and completion checkboxes saved in your browser. Run `ravin-downloader library` again after downloading new files to refresh the catalog.
+
+To build only selected courses or choose other directories:
+
+```bash
+ravin-downloader library 44 --output library --downloads downloads
+ravin-downloader serve-library --site-dir library --downloads downloads --port 8765
+```
+
+The generated `library/` directory is Git-ignored because its JSON contains details about your enrollments. No passwords, cookies, session tokens, or remote file URLs are written to the catalog.
 
 The saved session is checked on every run. When it expires or Cloudflare rejects it, the authentication browser opens automatically and replaces the saved values. You can force that refresh yourself with:
 

@@ -1,5 +1,6 @@
 import email.message
 import http.client
+import json
 import os
 import sys
 import tempfile
@@ -10,18 +11,22 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from ravin_downloader import (
+    Course,
     FileItem,
     MoodleClient,
+    _CourseStructureParser,
     _FormParser,
     _LinkParser,
     _clean_name,
     _browser_login_url,
+    _build_library_catalog,
     _capture_browser_session,
     _filename_from_headers,
     _is_cloudflare_challenge,
     _load_env_file,
     _parse_moodle_config,
     _save_env_values,
+    _write_library_site,
     _unique,
     build_parser,
 )
@@ -73,6 +78,13 @@ class ParserTests(unittest.TestCase):
         args = build_parser().parse_args(["login"])
         self.assertEqual(args.command, "login")
         self.assertFalse(args.manual_session)
+
+    def test_library_commands_parse(self):
+        build = build_parser().parse_args(["library", "44", "--output", "my-library"])
+        self.assertEqual(build.course_ids, [44])
+        self.assertEqual(build.output, Path("my-library"))
+        serve = build_parser().parse_args(["serve-library", "--port", "9000"])
+        self.assertEqual(serve.port, 9000)
 
     def test_browser_login_captures_user_agent_and_cookies(self):
         class FakeLaunchLink:
@@ -207,6 +219,27 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parser.links[0], ("https://training.example/pluginfile.php/10/file.pdf", "Notes"))
         self.assertEqual(parser.media[0], "https://training.example/pluginfile.php/11/video.mp4")
 
+    def test_parses_course_chapters_and_activities(self):
+        parser = _CourseStructureParser("https://training.example/course/view.php?id=44")
+        parser.feed(
+            '<li id="section-2" data-for="section" data-id="940" '
+            'data-sectionid="2" data-sectionname="Chapter 1">'
+            '<input type="checkbox">'
+            '<div class="summary"><p>Core networking concepts</p></div>'
+            '<ul><li class="activity resource modtype_resource" data-for="cmitem" data-id="4940">'
+            '<div data-activityname="Introduction to Networks">'
+            '<img src="icon.png"><a href="/mod/resource/view.php?id=4940">Lesson</a>'
+            '<span class="activitybadge">MP4</span><button class="btn-subtle-success">Done</button>'
+            '</div></li></ul></li>'
+        )
+        sections = parser.result()
+        self.assertEqual(sections[0]["name"], "Chapter 1")
+        self.assertEqual(sections[0]["summary"], "Core networking concepts")
+        self.assertEqual(sections[0]["activities"][0]["id"], 4940)
+        self.assertEqual(sections[0]["activities"][0]["type"], "resource")
+        self.assertEqual(sections[0]["activities"][0]["badge"], "MP4")
+        self.assertTrue(sections[0]["activities"][0]["lms_completed"])
+
     def test_filename_prefers_content_disposition(self):
         headers = email.message.Message()
         headers["Content-Disposition"] = "attachment; filename*=UTF-8''lesson%201.mp4"
@@ -244,6 +277,58 @@ class ParserTests(unittest.TestCase):
                 },
             )
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+
+    def test_builds_static_library_catalog_from_downloads(self):
+        class FakeClient:
+            site = "https://training.example"
+
+            def list_courses(self):
+                return [Course(44, "Network +", "NET-44")]
+
+            def list_files(self, course_id):
+                self.assert_course_id = course_id
+                return [
+                    FileItem(
+                        44,
+                        "Course files",
+                        "Introduction فایل",
+                        "1.mp4",
+                        "https://training.example/pluginfile.php/10/1.mp4?token=secret",
+                        "video/mp4",
+                        10,
+                    ),
+                    FileItem(
+                        44,
+                        "Course files",
+                        "Notes فایل",
+                        "notes.pdf",
+                        "https://training.example/pluginfile.php/11/notes.pdf",
+                        "application/pdf",
+                        20,
+                    ),
+                ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            downloads = root / "downloads"
+            output = root / "library"
+            video = downloads / "44" / "Course files" / "1.mp4"
+            video.parent.mkdir(parents=True)
+            video.write_bytes(b"video")
+            catalog = _build_library_catalog(FakeClient(), downloads, output)
+            self.assertEqual(catalog["stats"]["courses"], 1)
+            self.assertEqual(catalog["stats"]["downloaded_files"], 1)
+            items = catalog["courses"][0]["sections"][0]["items"]
+            self.assertEqual(items[0]["title"], "Introduction")
+            self.assertEqual(items[0]["kind"], "video")
+            self.assertEqual(items[0]["status"], "downloaded")
+            self.assertEqual(items[0]["local_url"], "../downloads/44/Course%20files/1.mp4")
+            self.assertEqual(items[1]["status"], "missing")
+            catalog_path = _write_library_site(output, catalog)
+            written = json.loads(catalog_path.read_text(encoding="utf-8"))
+            self.assertEqual(written["schema_version"], 2)
+            self.assertTrue((output / "index.html").is_file())
+            self.assertTrue((output / "course.html").is_file())
 
     def test_interrupted_download_retries_with_range(self):
         first = _FakeResponse(
