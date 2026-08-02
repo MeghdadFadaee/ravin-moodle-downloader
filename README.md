@@ -93,9 +93,9 @@ ravin-downloader library
 ravin-downloader serve-library --open
 ```
 
-The first command refreshes `library/courses.json` from the LMS and copies the static HTML, CSS, and JavaScript pages into `library/`. The catalog preserves the LMS chapter order and includes section IDs and summaries, every activity and its type, lesson descriptions, LMS completion state, original filenames, MIME types, sizes, extensions, local download status, and safe LMS activity links. It does not copy the large course files. The pages link to the originals under `downloads/`, keeping their original filenames.
+The first command refreshes `library/courses.json` from the LMS and prepares `library/` as a self-contained web root. The catalog preserves the LMS chapter order and includes section IDs and summaries, every activity and its type, lesson descriptions, LMS completion state, original filenames, MIME types, sizes, extensions, local download status, and safe LMS activity links. Large course files are not copied: `library/media` is a relative symlink that points only to `downloads/`.
 
-The second command serves both directories locally at `http://localhost:8765/library/`. The library includes course search, true chapter grouping, offline progress, resource filters, efficient seekable video playback, document links, online LMS activities, dark mode, and completion checkboxes saved in your browser. Run `ravin-downloader library` again after downloading new files to refresh the catalog.
+The second command serves only the prepared web root at `http://localhost:8765/`. The library includes course search, true chapter grouping, offline progress, resource filters, efficient seekable video playback, document links, online LMS activities, dark mode, and completion checkboxes saved in your browser. Run `ravin-downloader library` again after downloading new files to refresh the catalog.
 
 To build only selected courses or choose other directories:
 
@@ -104,7 +104,41 @@ ravin-downloader library 44 --output library --downloads downloads
 ravin-downloader serve-library --site-dir library --downloads downloads --port 8765
 ```
 
-The generated `library/` directory is Git-ignored because its JSON contains details about your enrollments. No passwords, cookies, session tokens, or remote file URLs are written to the catalog.
+If the catalog data is already current and you only need to rebuild the pages, symlink, or Nginx configuration, no LMS connection is required:
+
+```bash
+ravin-downloader library --reuse-catalog
+```
+
+The generated directory contains:
+
+```text
+library/
+├── index.html
+├── course.html
+├── app.js
+├── styles.css
+├── courses.json
+├── nginx-server.conf
+└── media -> ../downloads
+```
+
+For Nginx, include the generated server block inside the `http {}` section of your main configuration:
+
+```nginx
+include /absolute/path/to/your/clone/library/nginx-server.conf;
+```
+
+Then check and reload Nginx:
+
+```bash
+nginx -t
+brew services restart nginx
+```
+
+Open `http://localhost:8765/`. Nginx now uses `library/` as its complete document root. The repository, `.env`, browser profile, source code, and Git metadata are outside that root and cannot be requested through the site. Only the explicit `media` symlink exposes `downloads/`.
+
+The generated `library/` directory is Git-ignored because its JSON contains details about your enrollments. No passwords, cookies, session tokens, or remote protected-file URLs are written to the catalog.
 
 The saved session is checked on every run. When it expires or Cloudflare rejects it, the authentication browser opens automatically and replaces the saved values. You can force that refresh yourself with:
 

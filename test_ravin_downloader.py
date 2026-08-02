@@ -25,6 +25,7 @@ from ravin_downloader import (
     _is_cloudflare_challenge,
     _load_env_file,
     _parse_moodle_config,
+    _reuse_library_catalog,
     _save_env_values,
     _write_library_site,
     _unique,
@@ -80,9 +81,10 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(args.manual_session)
 
     def test_library_commands_parse(self):
-        build = build_parser().parse_args(["library", "44", "--output", "my-library"])
+        build = build_parser().parse_args(["library", "44", "--output", "my-library", "--reuse-catalog"])
         self.assertEqual(build.course_ids, [44])
         self.assertEqual(build.output, Path("my-library"))
+        self.assertTrue(build.reuse_catalog)
         serve = build_parser().parse_args(["serve-library", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 
@@ -322,13 +324,66 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(items[0]["title"], "Introduction")
             self.assertEqual(items[0]["kind"], "video")
             self.assertEqual(items[0]["status"], "downloaded")
-            self.assertEqual(items[0]["local_url"], "../downloads/44/Course%20files/1.mp4")
+            self.assertEqual(items[0]["local_url"], "media/44/Course%20files/1.mp4")
             self.assertEqual(items[1]["status"], "missing")
-            catalog_path = _write_library_site(output, catalog)
+            catalog_path = _write_library_site(output, catalog, downloads)
             written = json.loads(catalog_path.read_text(encoding="utf-8"))
             self.assertEqual(written["schema_version"], 2)
             self.assertTrue((output / "index.html").is_file())
             self.assertTrue((output / "course.html").is_file())
+            self.assertTrue((output / "media").is_symlink())
+            self.assertEqual((output / "media").resolve(), downloads.resolve())
+            nginx_config = (output / "nginx-server.conf").read_text(encoding="utf-8")
+            self.assertIn(f"root \"{output.resolve()}\";", nginx_config)
+            self.assertNotIn(str(root / ".env"), nginx_config)
+
+    def test_reuses_catalog_and_migrates_old_download_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "library"
+            downloads = root / "downloads"
+            media = downloads / "44" / "Course files" / "1.mp4"
+            media.parent.mkdir(parents=True)
+            media.write_bytes(b"video")
+            (downloads / "44" / "files-map.txt").write_text(
+                "  1.          ?  Course files / Introduction to Networks فایل / 1.mp4\n",
+                encoding="utf-8",
+            )
+            output.mkdir()
+            (output / "courses.json").write_text(
+                json.dumps(
+                    {
+                        "courses": [
+                            {
+                                "id": 44,
+                                "sections": [
+                                    {
+                                        "items": [
+                                            {"local_url": "../downloads/44/Course%20files/1.mp4"},
+                                            {
+                                                "local_url": None,
+                                                "filename": "",
+                                                "activity_type": "resource",
+                                                "title": "Introduction to Networks",
+                                                "status": "online",
+                                            },
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            catalog = _reuse_library_catalog(output, downloads)
+            item = catalog["courses"][0]["sections"][0]["items"][0]
+            self.assertEqual(item["local_url"], "media/44/Course%20files/1.mp4")
+            recovered = catalog["courses"][0]["sections"][0]["items"][1]
+            self.assertEqual(recovered["filename"], "1.mp4")
+            self.assertEqual(recovered["status"], "downloaded")
+            self.assertEqual(recovered["kind"], "video")
+            self.assertIn("prepared_at", catalog)
 
     def test_interrupted_download_retries_with_range(self):
         first = _FakeResponse(

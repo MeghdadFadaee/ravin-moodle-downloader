@@ -9,6 +9,8 @@ All notable changes to this project will be documented here.
 - Add course search, file filters, video playback, dark mode, and local completion tracking.
 - Preserve Moodle chapter ordering and include forums, quizzes, live classes, and course links.
 - Stream local media with HTTP byte-range support for efficient seeking.
+- Make `library/` a standalone safe web root with a `media` download symlink and generated Nginx server block.
+- Add offline catalog reuse for rebuilding the static/Nginx layout without contacting the LMS.
 - Add `library` and `serve-library` commands while keeping generated enrollment data private.
 
 ## 0.2.0 - 2026-08-02
