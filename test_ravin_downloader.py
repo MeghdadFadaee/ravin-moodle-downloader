@@ -7,6 +7,7 @@ from ravin_downloader import (
     _LinkParser,
     _clean_name,
     _filename_from_headers,
+    _is_cloudflare_challenge,
     _parse_moodle_config,
     _unique,
 )
@@ -49,6 +50,10 @@ class ParserTests(unittest.TestCase):
         item = FileItem(44, "Chapter 1", "Intro", "1.mp4", "https://x/pluginfile.php/1/1.mp4?token=a")
         duplicate = FileItem(44, "Other", "Other", "1.mp4", "https://x/pluginfile.php/1/1.mp4?token=b")
         self.assertEqual(_unique([item, duplicate]), [item])
+
+    def test_detects_cloudflare_page(self):
+        self.assertTrue(_is_cloudflare_challenge('<link href="/cdn-cgi/assets/css/static.css">'))
+        self.assertFalse(_is_cloudflare_challenge("<html><body>Moodle login</body></html>"))
 
 
 if __name__ == "__main__":

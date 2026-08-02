@@ -31,4 +31,27 @@ If the academy disables its mobile token service, the fallback is automatic. You
 python3 ravin_downloader.py --web-only --username YOUR_USERNAME courses
 ```
 
+## When Cloudflare blocks terminal login
+
+Ravin Academy currently puts a Cloudflare browser check in front of both Moodle login endpoints. If the normal command reports that Cloudflare requires a real browser session:
+
+1. Open the LMS in a normal browser and log in.
+2. Open the browser's Developer Tools, select **Network**, and reload the LMS page.
+3. Select the main `view.php` or `courses.php` request.
+4. Under **Request Headers**, copy the complete `User-Agent` value and the complete `Cookie` value.
+5. Run the browser-session mode:
+
+```bash
+python3 ravin_downloader.py --browser-session courses
+```
+
+Paste the User-Agent normally and the Cookie header into the hidden prompt. To list and download the detected course:
+
+```bash
+python3 ravin_downloader.py --browser-session files 44
+python3 ravin_downloader.py --browser-session download 44
+```
+
+The headers are kept in memory only. They are not displayed or saved. Never send the Cookie value to another person; it temporarily grants access to your signed-in LMS session. If Cloudflare rejects it, copy both values again from the same fresh browser request.
+
 The tool only requests content that the supplied account is already authorized to view. It does not bypass enrollment, permissions, DRM, or access controls.

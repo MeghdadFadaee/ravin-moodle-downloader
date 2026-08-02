@@ -206,18 +206,79 @@ def _unique(items: Iterable[FileItem]) -> list[FileItem]:
     return result
 
 
+def _is_cloudflare_challenge(page: str) -> bool:
+    sample = page[:20000].casefold()
+    return any(
+        marker in sample
+        for marker in (
+            "/cdn-cgi/",
+            "cf-browser-verification",
+            "challenge-platform",
+            "enable javascript and cookies to continue",
+        )
+    )
+
+
 class MoodleClient:
-    def __init__(self, site: str, username: str, password: str, web_only: bool = False) -> None:
+    def __init__(
+        self,
+        site: str,
+        username: str = "",
+        password: str = "",
+        web_only: bool = False,
+        cookie_header: str = "",
+        browser_user_agent: str = "",
+    ) -> None:
         self.site = site.rstrip("/")
         self.username = username
         self.password = password
         self.web_only = web_only
+        self.user_agent = browser_user_agent or USER_AGENT
         self.cookies = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies))
+        if cookie_header:
+            self._install_cookie_header(cookie_header)
+        self.has_browser_session = bool(cookie_header)
         self.token: str | None = None
         self.user_id: int | None = None
         self.sesskey: str | None = None
         self.mode = ""
+
+    def _install_cookie_header(self, cookie_header: str) -> None:
+        parsed_site = urllib.parse.urlparse(self.site)
+        hostname = parsed_site.hostname
+        if not hostname:
+            raise MoodleError(f"invalid Moodle site URL: {self.site}")
+        installed = 0
+        for pair in cookie_header.split(";"):
+            if "=" not in pair:
+                continue
+            name, value = pair.strip().split("=", 1)
+            if not name:
+                continue
+            cookie = http.cookiejar.Cookie(
+                version=0,
+                name=name,
+                value=value,
+                port=None,
+                port_specified=False,
+                domain=hostname,
+                domain_specified=True,
+                domain_initial_dot=False,
+                path="/",
+                path_specified=True,
+                secure=parsed_site.scheme == "https",
+                expires=None,
+                discard=True,
+                comment=None,
+                comment_url=None,
+                rest={"HttpOnly": None},
+                rfc2109=False,
+            )
+            self.cookies.set_cookie(cookie)
+            installed += 1
+        if not installed:
+            raise MoodleError("the pasted Cookie header did not contain any cookies")
 
     def _request(
         self,
@@ -233,7 +294,7 @@ class MoodleClient:
             body = urllib.parse.urlencode(data, doseq=True).encode()
         else:
             body = data
-        request_headers = {"User-Agent": USER_AGENT, "Accept-Language": "en,fa;q=0.8"}
+        request_headers = {"User-Agent": self.user_agent, "Accept-Language": "en,fa;q=0.8"}
         request_headers.update(headers or {})
         request = urllib.request.Request(url, data=body, headers=request_headers)
         try:
@@ -251,6 +312,10 @@ class MoodleClient:
             return raw.decode(charset, "replace"), response.geturl(), response.headers
 
     def authenticate(self) -> str:
+        if self.has_browser_session:
+            self._login_browser_session()
+            self.mode = "browser-session"
+            return self.mode
         mobile_error = ""
         if not self.web_only:
             try:
@@ -284,6 +349,8 @@ class MoodleClient:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as exc:
+            if _is_cloudflare_challenge(text):
+                raise MoodleError("Cloudflare requires a real browser session; use --browser-session") from exc
             raise MoodleError("the token endpoint did not return JSON") from exc
         token = payload.get("token")
         if not token:
@@ -295,6 +362,8 @@ class MoodleClient:
 
     def _login_web(self) -> None:
         login_page, login_url, _ = self._read_text("/login/index.php")
+        if _is_cloudflare_challenge(login_page):
+            raise MoodleError("Cloudflare requires a real browser session; use --browser-session")
         parser = _FormParser()
         parser.feed(login_page)
         form = next(
@@ -333,6 +402,27 @@ class MoodleClient:
                 self.user_id = int(config["userId"])
         if not self.sesskey:
             raise MoodleError("login succeeded, but Moodle's session key was not found")
+
+    def _login_browser_session(self) -> None:
+        dashboard, final_url, _ = self._read_text("/my/courses.php")
+        if _is_cloudflare_challenge(dashboard):
+            raise MoodleError(
+                "Cloudflare rejected the browser session. Copy a fresh Cookie header and use the exact same User-Agent."
+            )
+        parser = _FormParser()
+        parser.feed(dashboard)
+        login_form_present = any(
+            "username" in item["inputs"] and "password" in item["inputs"]
+            for item in parser.forms
+        )
+        if login_form_present or "/login/index.php" in urllib.parse.urlparse(final_url).path:
+            raise MoodleError("the pasted browser session is expired or is not logged in")
+        config = _parse_moodle_config(dashboard)
+        self.sesskey = str(config.get("sesskey") or "") or None
+        if config.get("userId") is not None:
+            self.user_id = int(config["userId"])
+        if not self.sesskey:
+            raise MoodleError("the page opened, but Moodle's session key was not found")
 
     def api_call(self, function: str, **params: Any) -> Any:
         if not self.token:
@@ -551,6 +641,18 @@ def _credentials(args: argparse.Namespace) -> tuple[str, str]:
     return username, password
 
 
+def _browser_session(args: argparse.Namespace) -> tuple[str, str]:
+    user_agent = args.browser_user_agent or os.environ.get("RAVIN_USER_AGENT", "")
+    cookie_header = os.environ.get("RAVIN_COOKIE", "")
+    if not user_agent:
+        user_agent = input("Browser User-Agent header: ").strip()
+    if not cookie_header:
+        cookie_header = getpass.getpass("Browser Cookie header (hidden): ").strip()
+    if not user_agent or not cookie_header:
+        raise MoodleError("both the browser User-Agent and Cookie headers are required")
+    return user_agent, cookie_header
+
+
 def _format_size(size: int | None) -> str:
     if size is None:
         return "?"
@@ -568,6 +670,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--site", default=DEFAULT_SITE, help=f"Moodle base URL (default: {DEFAULT_SITE})")
     parser.add_argument("--username", help="LMS username; password is prompted securely")
     parser.add_argument("--web-only", action="store_true", help="skip the Moodle mobile API and use a normal web session")
+    parser.add_argument(
+        "--browser-session",
+        action="store_true",
+        help="reuse request headers from an already logged-in browser (works with Cloudflare)",
+    )
+    parser.add_argument(
+        "--browser-user-agent",
+        help="User-Agent copied from the logged-in browser; otherwise prompted",
+    )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -585,8 +696,16 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        username, password = _credentials(args)
-        client = MoodleClient(args.site, username, password, web_only=args.web_only)
+        if args.browser_session:
+            browser_user_agent, cookie_header = _browser_session(args)
+            client = MoodleClient(
+                args.site,
+                cookie_header=cookie_header,
+                browser_user_agent=browser_user_agent,
+            )
+        else:
+            username, password = _credentials(args)
+            client = MoodleClient(args.site, username, password, web_only=args.web_only)
         mode = client.authenticate()
         print(f"Authenticated using {mode}.", file=sys.stderr)
 
