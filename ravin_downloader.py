@@ -19,6 +19,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sys
 import tempfile
 import time
@@ -32,13 +33,15 @@ from typing import Any, Iterable
 
 
 DEFAULT_SITE = "https://training.ravinacademy.com"
-__version__ = "0.1.0"
+DEFAULT_RAVIN_LOGIN_URL = "https://lms.ravinacademy.com/"
+__version__ = "0.2.0"
 USER_AGENT = f"RavinMoodleDownloader/{__version__} (+personal Moodle client)"
 DOWNLOADABLE_MODULES = {"resource", "folder", "page", "book"}
 DEFAULT_ENV_FILE = Path.cwd() / ".env"
 ENV_KEYS = {
     "username": "RAVIN_USERNAME",
     "password": "RAVIN_PASSWORD",
+    "login_url": "RAVIN_LOGIN_URL",
     "user_agent": "RAVIN_USER_AGENT",
     "cookie": "RAVIN_COOKIE",
 }
@@ -845,12 +848,253 @@ def _prompt_browser_session(args: argparse.Namespace, *, fresh: bool = False) ->
     return user_agent, cookie_header
 
 
+def _find_browser_executable(explicit: Path | None = None) -> Path | None:
+    if explicit:
+        candidate = explicit.expanduser().resolve()
+        return candidate if candidate.is_file() else None
+    candidates = [
+        Path("/Applications/Zen.app/Contents/MacOS/zen"),
+        Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+        Path("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+        Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        Path("/Applications/Firefox.app/Contents/MacOS/firefox"),
+    ]
+    for command in ("zen", "firefox", "google-chrome", "chromium", "chromium-browser", "brave-browser"):
+        found = shutil.which(command)
+        if found:
+            candidates.append(Path(found))
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
+def _browser_login_url(args: argparse.Namespace) -> str:
+    configured = getattr(args, "login_url", None) or _env_value(args, ENV_KEYS["login_url"])
+    if configured:
+        return configured
+    hostname = (urllib.parse.urlsplit(args.site).hostname or "").casefold()
+    if hostname == "training.ravinacademy.com":
+        return DEFAULT_RAVIN_LOGIN_URL
+    return urllib.parse.urljoin(args.site.rstrip("/") + "/", "my/courses.php")
+
+
+def _capture_browser_session(args: argparse.Namespace) -> tuple[str, str]:
+    """Open an installed browser through Selenium and capture its authenticated session."""
+    try:
+        from selenium import webdriver
+        from selenium.common.exceptions import WebDriverException
+        from selenium.webdriver.common.by import By
+    except ImportError as exc:
+        raise MoodleError(
+            "automatic browser login is not installed. Run:\n"
+            "  python3 -m pip install 'ravin-moodle-downloader[browser]'"
+        ) from exc
+
+    executable = _find_browser_executable(args.browser_executable)
+    if executable is None:
+        raise MoodleError(
+            "no supported browser was found. Install Firefox/Zen/Chrome, or pass "
+            "--browser-executable /path/to/browser"
+        )
+
+    profile = args.browser_profile.expanduser().resolve()
+    profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(profile, 0o700)
+    except OSError:
+        pass
+
+    browser_name = executable.name.casefold()
+    try:
+        if "firefox" in browser_name or "zen" in browser_name:
+            from selenium.webdriver.firefox.options import Options
+            from selenium.webdriver.firefox.service import Service
+
+            options = Options()
+            options.binary_location = str(executable)
+            options.add_argument("-profile")
+            options.add_argument(str(profile))
+            driver_path = shutil.which("geckodriver")
+            service = Service(executable_path=driver_path) if driver_path else Service()
+            driver = webdriver.Firefox(options=options, service=service)
+        else:
+            from selenium.webdriver.chrome.options import Options
+
+            options = Options()
+            options.binary_location = str(executable)
+            options.add_argument(f"--user-data-dir={profile}")
+            options.add_argument("--no-first-run")
+            driver = webdriver.Chrome(options=options)
+    except WebDriverException as exc:
+        raise MoodleError(
+            f"could not launch {executable.name}: {exc}. "
+            "Selenium Manager may need network access once to install the matching driver."
+        ) from exc
+
+    login_url = _browser_login_url(args)
+    username = _env_value(args, ENV_KEYS["username"])
+    password = _env_value(args, ENV_KEYS["password"])
+    deadline = time.monotonic() + max(args.login_timeout, 30)
+    print(f"Opening {executable.name} for LMS authentication...", file=sys.stderr)
+    print("Complete Cloudflare or LMS login in that window if requested.", file=sys.stderr)
+    try:
+        driver.get(login_url)
+        submitted_credentials = False
+        credential_attempts = 0
+        last_location = ""
+        while time.monotonic() < deadline:
+            current_location = urllib.parse.urlsplit(driver.current_url)._replace(query="", fragment="").geturl()
+            if current_location != last_location:
+                print(f"Browser is at {current_location}", file=sys.stderr)
+                last_location = current_location
+            try:
+                logged_in = bool(
+                    driver.execute_script(
+                        """return Boolean(
+                            window.M && M.cfg && Number(M.cfg.userId) > 0 &&
+                            document.querySelector('a[href*="/login/logout.php"]')
+                        );"""
+                    )
+                )
+            except WebDriverException:
+                logged_in = False
+            if logged_in:
+                cookies = driver.get_cookies()
+                user_agent = str(driver.execute_script("return navigator.userAgent;"))
+                cookie_header = "; ".join(
+                    f"{cookie['name']}={cookie['value']}"
+                    for cookie in cookies
+                    if cookie.get("name") and cookie.get("value")
+                )
+                if not cookie_header:
+                    raise MoodleError("browser login succeeded, but no site cookies were available")
+                return user_agent, cookie_header
+
+            # Ravin's account portal owns the login. Its Moodle launch link creates
+            # the session on training.ravinacademy.com and redirects there.
+            launch_links = driver.find_elements(
+                By.CSS_SELECTOR,
+                'a[href*="/moodle/login_student_user/"]',
+            )
+            launch_urls = [
+                element.get_attribute("href")
+                for element in launch_links
+                if element.is_displayed() and element.get_attribute("href")
+            ]
+            if launch_urls:
+                print("LMS login accepted; opening the Moodle course portal.", file=sys.stderr)
+                driver.get(launch_urls[0])
+                submitted_credentials = False
+                continue
+
+            if submitted_credentials:
+                error_elements = driver.find_elements(
+                    By.CSS_SELECTOR,
+                    ".loginerrors, .alert-danger, .invalid-feedback, "
+                    ".field-validation-error, .error-message, .toast-error, "
+                    ".swal2-validation-message, [data-region=\"login-error\"], [role=\"alert\"]",
+                )
+                error_messages = [
+                    " ".join(element.text.split())
+                    for element in error_elements
+                    if element.is_displayed() and element.text.strip()
+                ]
+                if error_messages:
+                    if credential_attempts >= 3:
+                        raise MoodleError(f"the LMS rejected the login: {error_messages[0][:300]}")
+                    print(f"The LMS rejected the saved login: {error_messages[0][:300]}", file=sys.stderr)
+                    print("Enter fresh credentials in this terminal.", file=sys.stderr)
+                    username, password = _credentials(args, fresh=True)
+                    _save_env_values(
+                        args.env_file,
+                        {
+                            ENV_KEYS["username"]: username,
+                            ENV_KEYS["password"]: password,
+                        },
+                    )
+                    args.env_values.update(
+                        {
+                            ENV_KEYS["username"]: username,
+                            ENV_KEYS["password"]: password,
+                        }
+                    )
+                    submitted_credentials = False
+
+            if username and password and not submitted_credentials:
+                login_controls = driver.execute_script(
+                    """const visible = (element) => {
+                        const style = window.getComputedStyle(element);
+                        const box = element.getBoundingClientRect();
+                        return !element.disabled && style.display !== 'none' &&
+                            style.visibility !== 'hidden' && box.width > 0 && box.height > 0;
+                    };
+                    const passwords = [...document.querySelectorAll('input[type="password"]')]
+                        .filter(visible);
+                    if (passwords.length !== 1) return null;
+                    const password = passwords[0];
+                    const form = password.form || password.closest('form');
+                    if (!form) return null;
+                    const candidates = [...form.querySelectorAll('input')].filter((element) => {
+                        const type = (element.type || 'text').toLowerCase();
+                        return visible(element) && ![
+                            'password', 'hidden', 'submit', 'button', 'checkbox',
+                            'radio', 'file', 'reset'
+                        ].includes(type);
+                    });
+                    const preferred = /user|mobile|phone|email|login|national/i;
+                    const username = candidates.find((element) => preferred.test(
+                        `${element.name} ${element.id} ${element.autocomplete}`
+                    )) || candidates[0];
+                    const submits = [...form.querySelectorAll('button, input[type="submit"]')]
+                        .filter((element) => visible(element) && element.type === 'submit');
+                    return username && submits.length ? [username, password, submits[0]] : null;"""
+                )
+                if login_controls:
+                    username_input, password_input, submit_button = login_controls
+                    driver.execute_script(
+                        """const setValue = (element, value) => {
+                            const setter = Object.getOwnPropertyDescriptor(
+                                HTMLInputElement.prototype, 'value'
+                            ).set;
+                            setter.call(element, value);
+                            element.dispatchEvent(new Event('input', {bubbles: true}));
+                            element.dispatchEvent(new Event('change', {bubbles: true}));
+                        };
+                        setValue(arguments[0], arguments[1]);
+                        setValue(arguments[2], arguments[3]);
+                        const form = arguments[0].closest('form');
+                        if (form && form.requestSubmit) {
+                            form.requestSubmit(arguments[4]);
+                        } else {
+                            arguments[4].click();
+                        }""",
+                        username_input,
+                        username,
+                        password_input,
+                        password,
+                        submit_button,
+                    )
+                    submitted_credentials = True
+                    credential_attempts += 1
+                    print("Submitted the stored LMS credentials.", file=sys.stderr)
+            time.sleep(1)
+        raise MoodleError(f"browser login did not finish within {max(args.login_timeout, 30)} seconds")
+    except WebDriverException as exc:
+        raise MoodleError(f"browser authentication failed: {exc}") from exc
+    finally:
+        driver.quit()
+
+
 def _authenticate_browser_session(
     args: argparse.Namespace,
     saved: tuple[str, str] | None = None,
 ) -> tuple[MoodleClient, str]:
     from_saved = saved is not None and not args.refresh_session
-    user_agent, cookie_header = saved if from_saved else _prompt_browser_session(args)
+    if from_saved:
+        user_agent, cookie_header = saved
+    elif args.manual_session:
+        user_agent, cookie_header = _prompt_browser_session(args, fresh=True)
+    else:
+        user_agent, cookie_header = _capture_browser_session(args)
     client = MoodleClient(
         args.site,
         cookie_header=cookie_header,
@@ -862,8 +1106,12 @@ def _authenticate_browser_session(
         if not from_saved:
             raise
         print(f"Saved browser session is no longer valid ({exc}).", file=sys.stderr)
-        print("Please paste fresh headers from a logged-in browser request.", file=sys.stderr)
-        user_agent, cookie_header = _prompt_browser_session(args, fresh=True)
+        if args.manual_session:
+            print("Please paste fresh headers from a logged-in browser request.", file=sys.stderr)
+            user_agent, cookie_header = _prompt_browser_session(args, fresh=True)
+        else:
+            print("Opening the authentication browser to refresh it.", file=sys.stderr)
+            user_agent, cookie_header = _capture_browser_session(args)
         client = MoodleClient(
             args.site,
             cookie_header=cookie_header,
@@ -873,12 +1121,14 @@ def _authenticate_browser_session(
     _save_env_values(
         args.env_file,
         {
+            ENV_KEYS["login_url"]: _browser_login_url(args),
             ENV_KEYS["user_agent"]: user_agent,
             ENV_KEYS["cookie"]: cookie_header,
         },
     )
     args.env_values.update(
         {
+            ENV_KEYS["login_url"]: _browser_login_url(args),
             ENV_KEYS["user_agent"]: user_agent,
             ENV_KEYS["cookie"]: cookie_header,
         }
@@ -902,12 +1152,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="List and download your Ravin Academy Moodle course files.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--site", default=DEFAULT_SITE, help=f"Moodle base URL (default: {DEFAULT_SITE})")
+    parser.add_argument(
+        "--login-url",
+        help=(
+            "account portal used for browser login; defaults to "
+            f"{DEFAULT_RAVIN_LOGIN_URL} for Ravin Academy"
+        ),
+    )
     parser.add_argument("--username", help="LMS username; password is prompted securely")
     parser.add_argument("--web-only", action="store_true", help="skip the Moodle mobile API and use a normal web session")
     parser.add_argument(
         "--browser-session",
         action="store_true",
-        help="reuse request headers from an already logged-in browser (works with Cloudflare)",
+        help="force saved or automatic browser-session authentication",
     )
     parser.add_argument(
         "--browser-user-agent",
@@ -922,11 +1179,34 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--refresh-session",
         action="store_true",
-        help="ignore the saved browser session and ask for fresh headers",
+        help="ignore the saved browser session and open the authentication browser",
+    )
+    parser.add_argument(
+        "--manual-session",
+        action="store_true",
+        help="prompt for User-Agent and Cookie headers instead of opening a browser",
+    )
+    parser.add_argument(
+        "--browser-profile",
+        type=Path,
+        default=Path.cwd() / ".ravin-browser-profile",
+        help="persistent profile for automatic browser login",
+    )
+    parser.add_argument(
+        "--browser-executable",
+        type=Path,
+        help="installed Zen, Firefox, Chrome, Chromium, or Brave executable",
+    )
+    parser.add_argument(
+        "--login-timeout",
+        type=int,
+        default=600,
+        help="seconds to wait for interactive browser login (default: 600)",
     )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    subparsers.add_parser("login", help="open a browser and refresh the saved LMS session")
     subparsers.add_parser("courses", help="list enrolled courses")
     files_parser = subparsers.add_parser("files", help="list downloadable files in a course")
     files_parser.add_argument("course_id", type=int)
@@ -943,6 +1223,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         args.env_values = _load_env_file(args.env_file)
+        if args.command == "login":
+            client, mode = _authenticate_browser_session(args)
+            print(f"Authenticated using {mode}; updated {args.env_file}.")
+            return 0
         saved_session = _browser_session_values(args, fresh=args.refresh_session)
         if args.browser_session or args.refresh_session or saved_session is not None:
             client, mode = _authenticate_browser_session(args, saved_session)
@@ -967,7 +1251,7 @@ def main(argv: list[str] | None = None) -> int:
             except MoodleError as exc:
                 if "cloudflare requires a real browser session" not in str(exc).casefold():
                     raise
-                print("Cloudflare blocked password login; switching to a saved browser session.", file=sys.stderr)
+                print("Cloudflare blocked password login; opening the authentication browser.", file=sys.stderr)
                 client, mode = _authenticate_browser_session(args)
         print(f"Authenticated using {mode}.", file=sys.stderr)
 

@@ -5,7 +5,7 @@ Contributions are welcome. Keep changes focused, dependency-free where practical
 ## Development workflow
 
 1. Fork the repository and create a branch for the change.
-2. Do not commit `.env`, browser cookies, passwords, downloaded course files, or private LMS responses.
+2. Do not commit `.env`, `.ravin-browser-profile/`, browser cookies, passwords, downloaded course files, or private LMS responses.
 3. Add or update tests for behavioral changes.
 4. Run:
 

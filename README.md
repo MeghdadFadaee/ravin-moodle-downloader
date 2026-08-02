@@ -2,7 +2,7 @@
 
 A dependency-free command-line client that lists your enrolled Moodle courses and downloads accessible course files. It defaults to Ravin Academy, but accepts another Moodle base URL through `--site`.
 
-The client first tries Moodle's official mobile web-service API and falls back to a normal web login plus Moodle's authenticated AJAX interface. For sites protected by Cloudflare, it can reuse request headers from a browser session.
+The client first tries Moodle's official mobile web-service API and falls back to a normal web login plus Moodle's authenticated AJAX interface. For sites protected by Cloudflare, it can establish and refresh an authenticated browser session automatically.
 
 > [!IMPORTANT]
 > Use this tool only for courses and files your account is authorized to access. Respect the LMS terms, instructor permissions, and applicable copyright rules. This project does not bypass enrollment, DRM, or access controls.
@@ -12,14 +12,14 @@ The client first tries Moodle's official mobile web-service API and falls back t
 - Python 3.10 or newer
 - An active enrollment on the target Moodle site
 
-The runtime has no third-party Python dependencies.
+The downloader itself uses only Python's standard library. Automatic browser login uses the optional Selenium package with an installed Zen, Firefox, Chrome, Chromium, or Brave browser.
 
 ## Installation
 
 After cloning or downloading the repository, install the command from its root directory:
 
 ```bash
-python3 -m pip install .
+python3 -m pip install '.[browser]'
 ```
 
 You can then use `ravin-downloader` from any shell. Running `python3 ravin_downloader.py` directly from the repository remains supported.
@@ -27,6 +27,7 @@ You can then use `ravin-downloader` from any shell. Running `python3 ravin_downl
 ## Quick start
 
 ```bash
+ravin-downloader login
 ravin-downloader courses
 ravin-downloader files COURSE_ID
 ravin-downloader download COURSE_ID
@@ -45,6 +46,8 @@ ravin-downloader --json files COURSE_ID
 
 On first use, missing values are requested interactively and saved in `.env` in the current directory. Copy [`.env.example`](.env.example) if you prefer to configure it manually. The file is Git-ignored and written with owner-only permissions.
 
+`ravin-downloader login` opens an installed browser using the Git-ignored `.ravin-browser-profile/` directory. For Ravin Academy it starts at `https://lms.ravinacademy.com/`, signs in there, follows the available Moodle course-launch link, and captures the resulting session on `training.ravinacademy.com`. If `.env` already contains `RAVIN_USERNAME` and `RAVIN_PASSWORD`, a compatible login form is filled automatically. Once login succeeds, the browser closes and `.env` is updated with the exact User-Agent and cookies. Use `--browser-executable /path/to/browser` to override automatic detection.
+
 Never commit or share `.env`. It may contain both account credentials and a temporary authenticated browser session.
 
 If the academy disables its mobile token service, the fallback is automatic. You can force that path for troubleshooting:
@@ -53,43 +56,45 @@ If the academy disables its mobile token service, the fallback is automatic. You
 ravin-downloader --web-only --username YOUR_USERNAME courses
 ```
 
-## When Cloudflare blocks terminal login
+## Browser login and Cloudflare
 
-Ravin Academy currently puts a Cloudflare browser check in front of both Moodle login endpoints. If the normal command reports that Cloudflare requires a real browser session:
-
-1. Open the LMS in a normal browser and log in.
-2. Open the browser's Developer Tools, select **Network**, and reload the LMS page.
-3. Select the main `view.php` or `courses.php` request.
-4. Under **Request Headers**, copy the complete `User-Agent` value and the complete `Cookie` value.
-5. Run the browser-session mode:
+Ravin Academy protects its account portal and Moodle with a browser check. Set up the browser helper once:
 
 ```bash
-ravin-downloader --browser-session courses
+python3 -m pip install '.[browser]'
+ravin-downloader login
 ```
 
-Paste the User-Agent normally and the Cookie header into the hidden prompt. After the headers are validated, they are saved in `.env` with owner-only permissions and ignored by Git. The same file can contain all four values:
+After authentication, `.env` can contain these values:
 
 ```dotenv
 RAVIN_USERNAME="your username"
 RAVIN_PASSWORD="your password"
+RAVIN_LOGIN_URL="https://lms.ravinacademy.com/"
 RAVIN_USER_AGENT="the complete browser User-Agent"
 RAVIN_COOKIE="the complete browser Cookie header"
 ```
 
-Values entered at the script's prompts are written or updated automatically. Later commands reuse `.env`, so you can simply run:
+Later commands reuse `.env`, so you can simply run:
 
 ```bash
 ravin-downloader files 44
 ravin-downloader download 44
 ```
 
-The saved session is checked on every run. When it expires or Cloudflare rejects it, the tool asks for fresh headers and replaces the saved copy. You can force that refresh yourself with:
+The saved session is checked on every run. When it expires or Cloudflare rejects it, the authentication browser opens automatically and replaces the saved values. You can force that refresh yourself with:
 
 ```bash
 ravin-downloader --refresh-session courses
 ```
 
-Never send `.env`, your password, or its Cookie value to another person; they grant access to your LMS account or signed-in session.
+If browser automation is unavailable, manual header entry remains available as a fallback:
+
+```bash
+ravin-downloader --manual-session --refresh-session courses
+```
+
+Never send `.env`, `.ravin-browser-profile/`, your password, or its Cookie value to another person; they grant access to your LMS account or signed-in session.
 
 ## Development
 

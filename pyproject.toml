@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ravin-moodle-downloader"
-version = "0.1.0"
+version = "0.2.0"
 description = "List and download authorized course files from Ravin Academy or another Moodle site"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -25,6 +25,9 @@ classifiers = [
     "Topic :: Education",
 ]
 dependencies = []
+
+[project.optional-dependencies]
+browser = ["selenium>=4.46,<5"]
 
 [project.scripts]
 ravin-downloader = "ravin_downloader:main"

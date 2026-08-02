@@ -8,6 +8,6 @@ Include the affected version, a minimal reproduction using synthetic data, and t
 
 ## Credential handling
 
-The downloader may store `RAVIN_USERNAME`, `RAVIN_PASSWORD`, `RAVIN_USER_AGENT`, and `RAVIN_COOKIE` in a local `.env` file. That file is excluded from Git and created with owner-only permissions, but users are still responsible for protecting it. Browser cookies should be treated like passwords and refreshed if exposed.
+The downloader may store `RAVIN_USERNAME`, `RAVIN_PASSWORD`, `RAVIN_USER_AGENT`, and `RAVIN_COOKIE` in a local `.env` file. Automatic login also stores a dedicated browser profile in `.ravin-browser-profile/`. Both paths are excluded from Git, and `.env` is created with owner-only permissions, but users are still responsible for protecting them. Browser cookies should be treated like passwords and refreshed if exposed.
 
 Only download content your account is authorized to access. This project does not support bypassing authentication, enrollment, DRM, or other access controls.

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## 0.2.0 - 2026-08-02
+
+- Add a persistent, interactive installed-browser login flow that handles Cloudflare normally.
+- Start Ravin authentication at its account portal and automatically follow its Moodle handoff.
+- Capture the launched browser's User-Agent and cookies and update `.env` automatically.
+- Automatically reopen the authentication browser when a saved session expires.
+- Keep manual request-header entry as an explicit fallback.
+
 ## 0.1.0 - 2026-08-02
 
 - List enrolled Moodle courses through the mobile API or authenticated AJAX fallback.

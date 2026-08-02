@@ -1,9 +1,13 @@
 import email.message
 import http.client
 import os
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from ravin_downloader import (
     FileItem,
@@ -11,12 +15,15 @@ from ravin_downloader import (
     _FormParser,
     _LinkParser,
     _clean_name,
+    _browser_login_url,
+    _capture_browser_session,
     _filename_from_headers,
     _is_cloudflare_challenge,
     _load_env_file,
     _parse_moodle_config,
     _save_env_values,
     _unique,
+    build_parser,
 )
 
 
@@ -62,6 +69,118 @@ class _FakeDownloadClient(MoodleClient):
 
 
 class ParserTests(unittest.TestCase):
+    def test_login_command_parses_without_course_id(self):
+        args = build_parser().parse_args(["login"])
+        self.assertEqual(args.command, "login")
+        self.assertFalse(args.manual_session)
+
+    def test_browser_login_captures_user_agent_and_cookies(self):
+        class FakeLaunchLink:
+            def is_displayed(self):
+                return True
+
+            def get_attribute(self, name):
+                if name == "href":
+                    return "https://lms.example/moodle/login_student_user/162/"
+                return None
+
+        class FakeDriver:
+            current_url = "about:blank"
+
+            def get(self, url):
+                if "/moodle/login_student_user/" in url:
+                    self.current_url = "https://training.example/my/"
+                else:
+                    self.current_url = url
+
+            def execute_script(self, expression):
+                if "navigator.userAgent" in expression:
+                    return "Synthetic Browser/1"
+                return self.current_url == "https://training.example/my/"
+
+            def find_elements(self, _by, selector):
+                if "login_student_user" in selector and self.current_url == "https://lms.example/":
+                    return [FakeLaunchLink()]
+                return []
+
+            def get_cookies(self):
+                return [
+                    {"name": "MoodleSession", "value": "synthetic"},
+                    {"name": "cf_clearance", "value": "synthetic"},
+                ]
+
+            def quit(self):
+                return None
+
+        class FakeOptions:
+            binary_location = ""
+
+            def add_argument(self, _argument):
+                return None
+
+        class FakeService:
+            def __init__(self, **_kwargs):
+                return None
+
+        fake_webdriver = SimpleNamespace(
+            Firefox=lambda **_kwargs: FakeDriver(),
+            Chrome=lambda **_kwargs: FakeDriver(),
+        )
+        fake_selenium = types.ModuleType("selenium")
+        fake_selenium.webdriver = fake_webdriver
+        fake_common = types.ModuleType("selenium.common")
+        fake_exceptions = types.ModuleType("selenium.common.exceptions")
+        fake_exceptions.WebDriverException = RuntimeError
+        fake_webdriver_module = types.ModuleType("selenium.webdriver")
+        fake_webdriver_common = types.ModuleType("selenium.webdriver.common")
+        fake_by = types.ModuleType("selenium.webdriver.common.by")
+        fake_by.By = SimpleNamespace(CSS_SELECTOR="css selector")
+        fake_firefox = types.ModuleType("selenium.webdriver.firefox")
+        fake_firefox_options = types.ModuleType("selenium.webdriver.firefox.options")
+        fake_firefox_options.Options = FakeOptions
+        fake_firefox_service = types.ModuleType("selenium.webdriver.firefox.service")
+        fake_firefox_service.Service = FakeService
+
+        with tempfile.TemporaryDirectory() as directory:
+            executable = Path(directory) / "zen"
+            executable.touch()
+            args = SimpleNamespace(
+                site="https://training.example",
+                login_url="https://lms.example/",
+                browser_profile=Path(directory) / "profile",
+                browser_executable=executable,
+                login_timeout=30,
+                env_values={},
+            )
+            with patch.dict(
+                sys.modules,
+                {
+                    "selenium": fake_selenium,
+                    "selenium.common": fake_common,
+                    "selenium.common.exceptions": fake_exceptions,
+                    "selenium.webdriver": fake_webdriver_module,
+                    "selenium.webdriver.common": fake_webdriver_common,
+                    "selenium.webdriver.common.by": fake_by,
+                    "selenium.webdriver.firefox": fake_firefox,
+                    "selenium.webdriver.firefox.options": fake_firefox_options,
+                    "selenium.webdriver.firefox.service": fake_firefox_service,
+                },
+            ):
+                user_agent, cookie_header = _capture_browser_session(args)
+        self.assertEqual(user_agent, "Synthetic Browser/1")
+        self.assertEqual(
+            cookie_header,
+            "MoodleSession=synthetic; cf_clearance=synthetic",
+        )
+
+    def test_ravin_browser_login_starts_at_account_portal(self):
+        args = SimpleNamespace(
+            site="https://training.ravinacademy.com",
+            login_url=None,
+            env_values={},
+        )
+        self.assertEqual(_browser_login_url(args), "https://lms.ravinacademy.com/")
+
     def test_parses_login_form_and_hidden_token(self):
         parser = _FormParser()
         parser.feed(
