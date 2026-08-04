@@ -1,73 +1,57 @@
 # Ravin Moodle Downloader
 
-A lightweight command-line client that lists your enrolled Moodle courses, downloads accessible course files, and builds a private learning library. It defaults to Ravin Academy, but accepts another Moodle base URL through `--site`.
+A small command-line client for scanning authorized Moodle courses, downloading their files, and browsing them in a private static learning library. It defaults to Ravin Academy and can target another Moodle base URL with `--site`.
 
-The client first tries Moodle's official mobile web-service API and falls back to a normal web login plus Moodle's authenticated AJAX interface. For sites protected by Cloudflare, it can establish and refresh an authenticated browser session automatically.
+The client tries Moodle's mobile API first, falls back to its authenticated web interface, and can establish a real browser session for sites protected by Cloudflare.
 
 > [!IMPORTANT]
-> Use this tool only for courses and files your account is authorized to access. Respect the LMS terms, instructor permissions, and applicable copyright rules. This project does not bypass enrollment, DRM, or access controls.
+> Use this tool only for courses and files your account may access. Respect LMS terms, instructor permissions, and copyright. The project does not bypass enrollment, DRM, or access controls.
 
-## Requirements
+## Install
+
+Requirements:
 
 - Python 3.10 or newer
 - An active enrollment on the target Moodle site
+- Zen, Firefox, Chrome, Chromium, or Brave for automatic browser login
 
-The downloader core uses Python's standard library. Selenium is installed automatically because browser authentication is the normal path for Cloudflare-protected LMS sites. You also need an installed Zen, Firefox, Chrome, Chromium, or Brave browser.
-
-## Installation
-
-After cloning or downloading the repository, install the command from its root directory:
+From the repository root:
 
 ```bash
 python3 -m pip install .
 ```
 
-You can then use `ravin` from any shell. The equivalent module entry point is `python3 -m ravin`.
+This installs the `ravin` command and its browser automation dependency. The equivalent module entry point is `python3 -m ravin`.
 
 ## Quick start
 
 ```bash
 ravin login
-ravin courses
-ravin files COURSE_ID
+ravin scan
 ravin download COURSE_ID
-ravin library
-ravin serve-library --open
+ravin serve --open
 ```
 
-Files are saved directly in the private static library under `library/courses/<course-id>/content/`. Every activity uses the sortable `SECTION_NUMBER--ACTIVITY_POSITION--ACTIVITY_ID` directory format, while its real LMS title and metadata live in `item.json`. Original filenames are preserved inside each activity's `files/` directory. Existing completed files are skipped; interrupted downloads use a temporary `.part` suffix and resume automatically with HTTP byte-range requests.
+`scan` replaces the former separate course-listing, file-listing, and library-generation commands. It reads the LMS structure, reconciles everything already present on disk, and writes the JSON manifests consumed by the static site.
 
-For scripting, use JSON output:
+Scan only selected courses or print machine-readable results:
 
 ```bash
-ravin --json courses
-ravin --json files COURSE_ID
+ravin scan 44 45
+ravin scan 44 --json
 ```
 
-## Configuration
-
-On first use, missing values are requested interactively and saved in `.env` in the current directory. Copy [`.env.example`](.env.example) if you prefer to configure it manually. The file is Git-ignored and written with owner-only permissions.
-
-`ravin login` opens an installed browser using the Git-ignored `.ravin-browser-profile/` directory. For Ravin Academy it starts at `https://lms.ravinacademy.com/`, signs in there, follows the available Moodle course-launch link, and captures the resulting session on `training.ravinacademy.com`. If `.env` already contains `RAVIN_USERNAME` and `RAVIN_PASSWORD`, a compatible login form is filled automatically. Once login succeeds, the browser closes and `.env` is updated with the exact User-Agent and cookies. Use `--browser-executable /path/to/browser` to override automatic detection.
-
-Never commit or share `.env`. It may contain both account credentials and a temporary authenticated browser session.
-
-If the academy disables its mobile token service, the fallback is automatic. You can force that path for troubleshooting:
+Check downloads and learning artifacts without logging in or contacting the LMS:
 
 ```bash
-ravin --web-only --username YOUR_USERNAME courses
+ravin scan --offline
 ```
 
-## Browser login and Cloudflare
+## Authentication and `.env`
 
-Ravin Academy protects its account portal and Moodle with a browser check. Set up the browser helper once:
+`ravin login` opens a persistent, Git-ignored browser profile. For Ravin Academy it begins at `https://lms.ravinacademy.com/`, follows the Moodle launch into `training.ravinacademy.com`, and stores the resulting User-Agent and cookies in `.env`.
 
-```bash
-python3 -m pip install .
-ravin login
-```
-
-After authentication, `.env` can contain these values:
+Missing credentials are requested interactively. You can also copy [`.env.example`](.env.example) and fill it yourself:
 
 ```dotenv
 RAVIN_USERNAME="your username"
@@ -77,99 +61,111 @@ RAVIN_USER_AGENT="the complete browser User-Agent"
 RAVIN_COOKIE="the complete browser Cookie header"
 ```
 
-Later commands reuse `.env`, so you can simply run:
+`.env` is Git-ignored and written with owner-only permissions. Never commit or share it, the browser profile, your password, or your Cookie value.
+
+Saved sessions are checked before use. If one expires or Cloudflare rejects it, Ravin opens the authentication browser and replaces the saved values. Useful alternatives are:
 
 ```bash
-ravin files 44
+ravin --refresh-session scan
+ravin --manual-session --refresh-session scan
+ravin --web-only --username YOUR_USERNAME scan
+```
+
+## Downloads and activity bundles
+
+Download a course with:
+
+```bash
 ravin download 44
 ```
 
-## Static course library
-
-Build a clean local website from your enrolled courses and downloaded files:
-
-```bash
-ravin library
-ravin serve-library --open
-```
-
-The first command refreshes `library/courses.json` from the LMS and prepares `library/` as a self-contained web root. The catalog preserves the LMS chapter order and includes section IDs and summaries, every activity and its type, lesson descriptions, LMS completion state, original filenames, MIME types, sizes, extensions, local availability, learning artifacts, and safe LMS activity links. Course files already live inside this web root, so no project-level directories or symlinks are exposed.
-
-The second command serves only the prepared web root at `http://localhost:8765/`. The library includes course search, true chapter grouping, offline progress, resource filters, efficient seekable video playback, document and exam links, transcript and summary readers, Markdown exam questions, online LMS activities, dark mode, and completion checkboxes saved in your browser.
-
-To build only selected courses or choose other directories:
-
-```bash
-ravin library 44 --output library
-ravin serve-library --site-dir library --port 8765
-```
-
-If the catalog data is already current and you only need to rescan local artifacts or rebuild the pages and Nginx configuration, no LMS connection is required:
-
-```bash
-ravin library --reuse-catalog
-```
-
-The generated directory contains:
+Files are stored directly under `public/courses/<course-id>/content/`. Each LMS activity has one sortable, title-independent bundle named:
 
 ```text
-library/
-├── index.html
-├── course.html
-├── app.js
-├── styles.css
-├── courses.json
-├── nginx-server.conf
-└── courses/
+SECTION_NUMBER--ACTIVITY_POSITION--ACTIVITY_ID
+```
+
+Original filenames stay unchanged in the bundle's `files/` directory. Interrupted downloads use a `.part` suffix and resume with HTTP byte ranges. Completed files are skipped unless `--overwrite` is supplied.
+
+An activity can also contain generated study material:
+
+```text
+artifacts/
+├── transcript.fa.txt
+├── transcript.meta.json
+├── summary.fa.md
+├── summary.meta.json
+└── questions.fa.md
+```
+
+The scanner reports each applicable file, transcript, summary, and assessment as `missing`, `partial`, `complete`, `stale`, or `error`. Non-applicable states are recorded as `not_applicable`. Transcript freshness is checked against its source file metadata; summary freshness is checked against the transcript hash.
+
+The downloader updates the course manifest after every completed file. A final offline scan reconciles all totals, so an interrupted run still retains useful progress.
+
+## Static learning library
+
+The web interface is already present in the tracked `public/` directory. Generate or refresh its private data, then serve it:
+
+```bash
+ravin scan
+ravin serve --open
+```
+
+The site provides course search, chapter grouping, local availability and artifact states, video playback, document and assessment links, transcript and summary readers, Markdown question rendering, dark mode, and browser-local completion checkboxes.
+
+The layout is:
+
+```text
+public/
+├── index.html                 # tracked UI
+├── course.html                # tracked UI
+├── assets/                    # tracked CSS and JavaScript
+└── courses/                   # Git-ignored private/generated data
+    ├── catalog.json
     └── COURSE_ID/
-        ├── course.json
+        ├── manifest.json
         └── content/
             └── SECTION--POSITION--ACTIVITY/
-                ├── item.json
                 ├── files/
                 └── artifacts/
 ```
 
-For Nginx, include the generated server block inside the `http {}` section of your main configuration:
+Only `public/courses/` is ignored: contributors can safely commit changes to the shared HTML, CSS, and JavaScript without publishing their enrollments or downloaded material. Manifests never contain passwords, cookies, session tokens, protected file URLs, or machine-specific absolute paths.
+
+### Nginx
+
+Point Nginx at `public/`, not the repository root. Replace the example root with the absolute path to your clone:
 
 ```nginx
-include /absolute/path/to/your/clone/library/nginx-server.conf;
+server {
+    listen 8765;
+    server_name localhost;
+
+    root /absolute/path/to/easy-learn/public;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
 ```
 
-Then check and reload Nginx:
+After checking and reloading Nginx, open `http://localhost:8765/`. Because its document root is only `public/`, `.env`, source code, the browser profile, and Git metadata cannot be requested from the web server. Nginx handles byte-range media playback automatically.
 
-```bash
-nginx -t
-brew services restart nginx
+### Previous layouts
+
+When an older generated `library/courses.json` exists and `public/` has no manifests yet, the first `ravin scan` or `ravin download` performs a one-time migration. It moves the existing activity bundles into `public/courses/`, creates manifests, removes obsolete per-activity `item.json` files, and leaves downloaded media intact.
+
+## Command reference
+
+```text
+ravin login
+ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
+ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
+ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 
-Open `http://localhost:8765/`. Nginx uses `library/` as its complete document root. The repository, `.env`, browser profile, source code, and Git metadata remain outside that root and cannot be requested through the site.
-
-The generated `library/` directory is Git-ignored because its JSON contains details about your enrollments. No passwords, cookies, session tokens, or remote protected-file URLs are written to the catalog.
-
-### Migrating the legacy download layout
-
-Repositories created before version 0.4 can migrate their existing files without downloading them again:
-
-```bash
-ravin migrate-library --source downloads --library library
-```
-
-The migration uses the existing LMS catalog to place resources and exams in course order, moves transcripts and summaries into `artifacts/`, converts machine-specific metadata paths to relative paths, and writes a per-course `migration.json` journal.
-
-The saved session is checked on every run. When it expires or Cloudflare rejects it, the authentication browser opens automatically and replaces the saved values. You can force that refresh yourself with:
-
-```bash
-ravin --refresh-session courses
-```
-
-If browser automation is unavailable, manual header entry remains available as a fallback:
-
-```bash
-ravin --manual-session --refresh-session courses
-```
-
-Never send `.env`, `.ravin-browser-profile/`, your password, or its Cookie value to another person; they grant access to your LMS account or signed-in session.
+Authentication options such as `--site`, `--username`, `--refresh-session`, and `--manual-session` go before the command. Run `ravin --help` or `ravin COMMAND --help` for the complete reference.
 
 ## Development
 
@@ -177,27 +173,27 @@ The project uses a standard `src/` package layout:
 
 ```text
 src/ravin/
-├── cli.py          # command parsing and orchestration
+├── cli.py          # commands and orchestration
 ├── auth.py         # environment and browser authentication
 ├── client.py       # Moodle API/web client and downloads
 ├── parsers.py      # Moodle HTML parsers
-├── paths.py        # portable content paths and metadata
-├── catalog.py      # static catalog generation
-├── migration.py    # legacy layout migration
+├── paths.py        # portable content paths and artifacts
+├── catalog.py      # remote course catalog construction
+├── scan.py         # manifests and local state reconciliation
+├── migration.py    # previous-layout migration
 ├── server.py       # local range-aware HTTP server
-├── models.py       # shared data objects and errors
-└── assets/         # packaged static library UI
+└── models.py       # shared value objects and errors
 ```
 
-Run the test suite without installing additional packages:
+Run the checks with:
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q src tests
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance and [SECURITY.md](SECURITY.md) for reporting security issues.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) for project guidance.
 
 ## License and disclaimer
 
-Released under the [MIT License](LICENSE). This is an independent community project and is not affiliated with or endorsed by Ravin Academy or Moodle HQ.
+Released under the [MIT License](LICENSE). This independent community project is not affiliated with or endorsed by Ravin Academy or Moodle HQ.

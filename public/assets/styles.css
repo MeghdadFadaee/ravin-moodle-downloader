@@ -265,6 +265,7 @@ main {
 .course-badge { padding: 5px 9px; border-radius: 999px; color: var(--blue); background: var(--blue-soft); font-size: .72rem; font-weight: 750; }
 .course-card h3 { margin: 36px 0 10px; font-size: 1.4rem; line-height: 1.28; letter-spacing: -.025em; }
 .course-card-meta { margin: 0; color: var(--muted); font-size: .85rem; }
+.course-state-line { margin: 8px 0 0; color: var(--muted); font-size: .76rem; }
 .course-card-bottom { margin-top: auto; }
 
 .progress-track { height: 7px; margin: 28px 0 12px; overflow: hidden; border-radius: 99px; background: var(--line); }
@@ -279,6 +280,9 @@ main {
 
 .course-hero { min-height: 300px; margin-top: 0; }
 .course-heading { position: relative; z-index: 1; }
+.learning-states { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 2px; }
+.learning-states span { padding: 7px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 10px; color: rgba(255,255,255,.68); font-size: .72rem; }
+.learning-states strong { color: #fff; font-variant-numeric: tabular-nums; }
 .progress-panel { position: relative; z-index: 1; display: flex; align-items: center; gap: 18px; min-width: 250px; }
 .progress-panel > div:last-child { display: grid; }
 .progress-panel span { color: rgba(255,255,255,.62); font-size: .78rem; }
@@ -339,6 +343,11 @@ main {
 .artifact-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .artifact-button { padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line)); border-radius: 8px; color: var(--blue); background: var(--blue-soft); cursor: pointer; font-size: .7rem; font-weight: 750; }
 .artifact-button:hover { border-color: var(--blue); }
+.state-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
+.state-chip { padding: 4px 7px; border-radius: 7px; color: var(--muted); background: var(--surface-strong); font-size: .65rem; font-weight: 700; text-transform: capitalize; }
+.state-chip.complete { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 78%, transparent); }
+.state-chip.partial, .state-chip.stale { color: #9a6500; background: #fff2c7; }
+.state-chip.error, .state-chip.missing { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .resource-meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: .74rem; white-space: nowrap; }
 .type-pill { padding: 4px 8px; border-radius: 8px; color: var(--blue); background: var(--blue-soft); font-weight: 750; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-strong); }

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## 0.6.0 - 2026-08-04
+
+- Replace the separate course, file, and library builders with one `ravin scan` command.
+- Add per-course manifests and a small global catalog under the Git-ignored `public/courses/` directory.
+- Reconcile download, transcript, summary, and assessment states, including stale artifact detection.
+- Update manifests after every completed download and add an authentication-free offline scan.
+- Move the shared static interface into the tracked `public/` web root while keeping all personal course data ignored.
+- Load course details from their own manifests and show learning-artifact states in the library.
+- Remove redundant per-activity `item.json` files and migrate the previous generated library layout automatically.
+
 ## 0.5.0 - 2026-08-04
 
 - Replace the `ravin-downloader` console command with the shorter `ravin` command.

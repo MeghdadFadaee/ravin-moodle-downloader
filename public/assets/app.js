@@ -142,9 +142,16 @@ function setupTheme() {
 }
 
 async function loadCatalog() {
-  const response = await fetch("courses.json", { cache: "no-store" });
-  if (!response.ok) throw new Error(`Could not load courses.json (${response.status})`);
+  const response = await fetch("courses/catalog.json", { cache: "no-store" });
+  if (!response.ok) throw new Error(`Could not load the course catalog (${response.status})`);
   return response.json();
+}
+
+async function loadCourse(courseId) {
+  const response = await fetch(`courses/${encodeURIComponent(courseId)}/manifest.json`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`Could not load course ${courseId} (${response.status})`);
+  const manifest = await response.json();
+  return manifest.course;
 }
 
 function showLoadError(error) {
@@ -156,7 +163,7 @@ function showLoadError(error) {
   const title = document.createElement("strong");
   title.textContent = "The course data could not be loaded";
   const detail = document.createElement("span");
-  detail.textContent = "Open this library with ‘ravin serve-library’, then refresh the page.";
+  detail.textContent = "Open this library with ‘ravin serve’, then refresh the page.";
   box.append(title, detail);
   target.append(box);
   console.error(error);
@@ -183,6 +190,11 @@ function courseCard(course) {
   const meta = document.createElement("p");
   meta.className = "course-card-meta";
   meta.textContent = `${course.section_count} chapters · ${course.file_count} files · ${formatBytes(course.downloaded_bytes)} offline`;
+  const states = document.createElement("p");
+  states.className = "course-state-line";
+  const transcripts = course.states?.transcripts || {};
+  const summaries = course.states?.summaries || {};
+  states.textContent = `${transcripts.complete || 0}/${transcripts.total || 0} transcripts · ${summaries.complete || 0}/${summaries.total || 0} summaries`;
 
   const bottom = document.createElement("div");
   bottom.className = "course-card-bottom";
@@ -199,7 +211,7 @@ function courseCard(course) {
   link.href = `course.html?id=${encodeURIComponent(course.id)}`;
   link.innerHTML = `Open course <span aria-hidden="true">→</span>`;
   bottom.append(track, progress, link);
-  card.append(top, title, meta, bottom);
+  card.append(top, title, meta, states, bottom);
   return card;
 }
 
@@ -285,6 +297,19 @@ function resourceRow(item, index) {
     });
     main.append(artifactActions);
   }
+  const stateLabels = { download: "File", transcript: "Transcript", summary: "Summary", questions: "Questions" };
+  const visibleStates = Object.entries(item.state || {}).filter(([, value]) => value !== "not_applicable");
+  if (visibleStates.length) {
+    const stateChips = document.createElement("div");
+    stateChips.className = "state-chips";
+    visibleStates.forEach(([kind, value]) => {
+      const chip = document.createElement("span");
+      chip.className = `state-chip ${value}`;
+      chip.textContent = `${stateLabels[kind] || kind}: ${value.replace("_", " ")}`;
+      stateChips.append(chip);
+    });
+    main.append(stateChips);
+  }
 
   const meta = document.createElement("div");
   meta.className = "resource-meta";
@@ -321,7 +346,7 @@ function resourceRow(item, index) {
     action.textContent = "Open LMS";
   } else {
     action = document.createElement("span");
-    action.textContent = item.status === "partial" ? "Partial" : "Missing";
+    action.textContent = item.status === "partial" ? "Partial" : item.status === "error" ? "Error" : "Missing";
     action.setAttribute("aria-disabled", "true");
   }
   action.className = "action-button";
@@ -430,7 +455,6 @@ function closeArtifact() {
 
 function renderCourse() {
   const id = new URLSearchParams(window.location.search).get("id");
-  state.course = state.catalog.courses.find((course) => String(course.id) === String(id));
   if (!state.course) {
     showLoadError(new Error(`Course ${id || "(missing)"} was not found`));
     return;
@@ -444,6 +468,13 @@ function renderCourse() {
   setText("courseSummary", `${course.activity_count ?? course.file_count} activities, ${course.file_count} downloadable files, and ${course.section_count} chapters.`);
   setText("coursePercent", `${percent}%`);
   setText("courseDownloaded", `${course.downloaded_count} of ${course.file_count}`);
+  const countState = (name) => {
+    const value = course.states?.[name] || {};
+    return `${value.complete || 0} / ${value.total || 0}`;
+  };
+  setText("transcriptState", countState("transcripts"));
+  setText("summaryState", countState("summaries"));
+  setText("assessmentState", countState("assessments"));
   setText("generatedAt", `Updated ${new Date(state.catalog.generated_at).toLocaleString()}`);
   byId("courseProgress").style.setProperty("--progress", percent);
   byId("courseSource").href = course.source_url;
@@ -473,8 +504,11 @@ async function start() {
   setupTheme();
   try {
     state.catalog = await loadCatalog();
-    if (document.body.dataset.page === "course") renderCourse();
-    else renderIndex();
+    if (document.body.dataset.page === "course") {
+      const id = new URLSearchParams(window.location.search).get("id");
+      state.course = await loadCourse(id);
+      renderCourse();
+    } else renderIndex();
   } catch (error) {
     showLoadError(error);
   }

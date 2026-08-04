@@ -20,12 +20,7 @@ from ravin.auth import (
     _save_env_values,
 )
 from ravin.cli import build_parser
-from ravin.library import (
-    _build_library_catalog,
-    _migrate_legacy_downloads,
-    _reuse_library_catalog,
-    _write_library_site,
-)
+from ravin.migration import migrate_library_to_public
 from ravin.parsers import (
     _CourseStructureParser,
     _FormParser,
@@ -39,6 +34,7 @@ from ravin.paths import (
     _is_cloudflare_challenge,
     _unique,
 )
+from ravin.scan import scan_offline, scan_remote
 
 
 class _FakeResponse:
@@ -88,12 +84,16 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.command, "login")
         self.assertFalse(args.manual_session)
 
-    def test_library_commands_parse(self):
-        build = build_parser().parse_args(["library", "44", "--output", "my-library", "--reuse-catalog"])
-        self.assertEqual(build.course_ids, [44])
-        self.assertEqual(build.output, Path("my-library"))
-        self.assertTrue(build.reuse_catalog)
-        serve = build_parser().parse_args(["serve-library", "--port", "9000"])
+    def test_scan_download_and_serve_commands_parse(self):
+        scan = build_parser().parse_args(["scan", "44", "--public", "site", "--offline", "--json"])
+        self.assertEqual(scan.course_ids, [44])
+        self.assertEqual(scan.public, Path("site"))
+        self.assertTrue(scan.offline)
+        self.assertTrue(scan.json)
+        download = build_parser().parse_args(["download", "44", "--retries", "2"])
+        self.assertEqual(download.course_id, 44)
+        self.assertEqual(download.retries, 2)
+        serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 
     def test_browser_login_captures_user_agent_and_cookies(self):
@@ -289,7 +289,7 @@ class ParserTests(unittest.TestCase):
             )
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
-    def test_builds_static_library_catalog_from_library_content(self):
+    def test_scan_writes_public_catalog_and_course_manifest(self):
         class FakeClient:
             site = "https://training.example"
 
@@ -306,7 +306,7 @@ class ParserTests(unittest.TestCase):
                         "1.mp4",
                         "https://training.example/pluginfile.php/10/1.mp4?token=secret",
                         "video/mp4",
-                        10,
+                        5,
                         section_id=940,
                         section_number=2,
                         activity_id=4940,
@@ -331,73 +331,71 @@ class ParserTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            output = root / "library"
+            output = root / "public"
             video = output / "courses" / "44" / "content" / "002--001--4940" / "files" / "1.mp4"
             video.parent.mkdir(parents=True)
             video.write_bytes(b"video")
-            catalog = _build_library_catalog(FakeClient(), output)
+            catalog = scan_remote(FakeClient(), output)
             self.assertEqual(catalog["stats"]["courses"], 1)
             self.assertEqual(catalog["stats"]["downloaded_files"], 1)
-            items = catalog["courses"][0]["sections"][0]["items"]
+            manifest_path = output / "courses" / "44" / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            items = [
+                item
+                for section in manifest["course"]["sections"]
+                for item in section["items"]
+            ]
             self.assertEqual(items[0]["title"], "Introduction")
             self.assertEqual(items[0]["kind"], "video")
             self.assertEqual(items[0]["status"], "downloaded")
             self.assertEqual(items[0]["local_url"], "courses/44/content/002--001--4940/files/1.mp4")
+            self.assertEqual(items[0]["state"]["download"], "complete")
+            self.assertEqual(items[0]["state"]["transcript"], "missing")
             self.assertEqual(items[1]["status"], "missing")
-            catalog_path = _write_library_site(output, catalog)
-            written = json.loads(catalog_path.read_text(encoding="utf-8"))
-            self.assertEqual(written["schema_version"], 3)
-            self.assertTrue((output / "index.html").is_file())
-            self.assertTrue((output / "course.html").is_file())
-            self.assertTrue((output / "courses" / "44" / "course.json").is_file())
-            nginx_config = (output / "nginx-server.conf").read_text(encoding="utf-8")
-            self.assertIn(f"root \"{output.resolve()}\";", nginx_config)
-            self.assertNotIn(str(root / ".env"), nginx_config)
+            written = json.loads((output / "courses" / "catalog.json").read_text(encoding="utf-8"))
+            self.assertEqual(written["schema_version"], 1)
+            self.assertEqual(written["courses"][0]["manifest_url"], "courses/44/manifest.json")
+            self.assertFalse((output / "index.html").exists())
 
-    def test_reuses_catalog_and_refreshes_library_links(self):
+    def test_offline_scan_refreshes_local_artifact_state(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            output = root / "library"
+            output = root / "public"
             media = output / "courses" / "44" / "content" / "002--001--4940" / "files" / "1.mp4"
             media.parent.mkdir(parents=True)
             media.write_bytes(b"video")
-            (media.parent.parent / "item.json").write_text(
-                json.dumps({"files": ["files/1.mp4"]}),
-                encoding="utf-8",
-            )
-            (output / "courses.json").write_text(
+            manifest_path = output / "courses" / "44" / "manifest.json"
+            manifest_path.write_text(
                 json.dumps(
                     {
-                        "courses": [
-                            {
-                                "id": 44,
-                                "sections": [
-                                    {
-                                        "items": [
-                                            {
-                                                "local_url": None,
-                                                "filename": "1.mp4",
-                                                "activity_type": "resource",
-                                                "title": "Introduction to Networks",
-                                                "status": "online",
-                                                "section_number": 2,
-                                                "activity_position": 1,
-                                                "activity_id": 4940,
-                                            },
-                                        ]
-                                    }
-                                ]
-                            }
-                        ]
+                        "schema_version": 1,
+                        "course": {
+                            "id": 44,
+                            "fullname": "Network +",
+                            "sections": [{
+                                "number": 2,
+                                "items": [{
+                                    "filename": "1.mp4",
+                                    "activity_type": "resource",
+                                    "kind": "video",
+                                    "title": "Introduction to Networks",
+                                    "section_number": 2,
+                                    "activity_position": 1,
+                                    "activity_id": 4940,
+                                }],
+                            }],
+                        },
                     }
                 ),
                 encoding="utf-8",
             )
-            catalog = _reuse_library_catalog(output)
-            item = catalog["courses"][0]["sections"][0]["items"][0]
+            catalog = scan_offline(output, [44])
+            refreshed = json.loads(manifest_path.read_text(encoding="utf-8"))
+            item = refreshed["course"]["sections"][0]["items"][0]
             self.assertEqual(item["local_url"], "courses/44/content/002--001--4940/files/1.mp4")
             self.assertEqual(item["status"], "downloaded")
-            self.assertIn("prepared_at", catalog)
+            self.assertEqual(item["state"]["download"], "complete")
+            self.assertEqual(catalog["stats"]["downloaded_files"], 1)
 
     def test_interrupted_download_retries_with_range(self):
         first = _FakeResponse(
@@ -432,25 +430,15 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), b"1234567890")
         self.assertEqual(client.request_headers, [{"Range": "bytes=5-"}])
 
-    def test_migrates_legacy_video_artifacts_and_exam_in_course_order(self):
+    def test_migrates_existing_library_bundles_into_public(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "downloads"
             library = root / "library"
-            course_files = source / "44" / "Course files"
-            exams = source / "44" / "Course exams"
-            course_files.mkdir(parents=True)
-            exams.mkdir(parents=True)
-            (course_files / "15.mp4").write_bytes(b"video")
-            (course_files / "15.mp4.txt").write_text("transcript", encoding="utf-8")
-            (course_files / "15.mp4.txt.json").write_text(
-                json.dumps({"source": "/private/15.mp4", "transcript": "/private/15.mp4.txt"}),
-                encoding="utf-8",
-            )
-            (course_files / "15.mp4.md").write_text("**منبع:** private/path\n\nSummary", encoding="utf-8")
-            (exams / "041264.pdf").write_bytes(b"exam")
-            (exams / "041264.md").write_text("# Questions", encoding="utf-8")
-            library.mkdir()
+            public = root / "public"
+            lesson = library / "courses" / "44" / "content" / "016--001--4954"
+            (lesson / "files").mkdir(parents=True)
+            (lesson / "files" / "15.mp4").write_bytes(b"video")
+            (lesson / "item.json").write_text("{}", encoding="utf-8")
             (library / "courses.json").write_text(
                 json.dumps(
                     {
@@ -475,22 +463,6 @@ class ParserTests(unittest.TestCase):
                                             }
                                         ],
                                     },
-                                    {
-                                        "id": 924,
-                                        "number": 17,
-                                        "name": "تمرین اول",
-                                        "items": [
-                                            {
-                                                "activity_id": 5201,
-                                                "activity_position": 2,
-                                                "activity_type": "quiz",
-                                                "section_id": 924,
-                                                "section_number": 17,
-                                                "title": "تمرین اول",
-                                                "filename": "",
-                                            }
-                                        ],
-                                    },
                                 ],
                             }
                         ]
@@ -498,17 +470,13 @@ class ParserTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            result = _migrate_legacy_downloads(source, library, [44])
-            self.assertEqual(result["courses"][0]["moved_files"], 6)
-            lesson = library / "courses" / "44" / "content" / "016--001--4954"
-            exam = library / "courses" / "44" / "content" / "017--002--5201"
-            self.assertEqual((lesson / "files" / "15.mp4").read_bytes(), b"video")
-            metadata = json.loads((lesson / "artifacts" / "transcript.meta.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["source"], "../files/15.mp4")
-            self.assertEqual(metadata["transcript"], "transcript.fa.txt")
-            self.assertTrue((exam / "files" / "041264.pdf").is_file())
-            self.assertTrue((exam / "artifacts" / "questions.fa.md").is_file())
-            self.assertFalse((source / "44").exists())
+            result = migrate_library_to_public(library, public)
+            migrated = public / "courses" / "44" / "content" / "016--001--4954"
+            self.assertEqual((migrated / "files" / "15.mp4").read_bytes(), b"video")
+            self.assertFalse((migrated / "item.json").exists())
+            self.assertTrue((public / "courses" / "44" / "manifest.json").is_file())
+            self.assertEqual(result["catalog"]["stats"]["downloaded_files"], 1)
+            self.assertFalse(library.exists())
 
 
 if __name__ == "__main__":

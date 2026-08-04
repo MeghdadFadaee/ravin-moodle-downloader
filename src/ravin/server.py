@@ -86,11 +86,11 @@ class _RangeRequestHandler(http.server.SimpleHTTPRequestHandler):
             remaining -= len(chunk)
 
 
-def _serve_library(site_dir: Path, host: str, port: int, open_browser: bool) -> None:
-    site_dir = site_dir.expanduser().resolve()
-    if not (site_dir / "index.html").is_file() or not (site_dir / "courses.json").is_file():
-        raise MoodleError(f"{site_dir} is not built yet; run `ravin library` first")
-    handler = functools.partial(_RangeRequestHandler, directory=str(site_dir))
+def _serve_library(public: Path, host: str, port: int, open_browser: bool) -> None:
+    public = public.expanduser().resolve()
+    if not (public / "index.html").is_file() or not (public / "courses" / "catalog.json").is_file():
+        raise MoodleError(f"{public} is not ready; run `ravin scan` first")
+    handler = functools.partial(_RangeRequestHandler, directory=str(public))
     try:
         server = http.server.ThreadingHTTPServer((host, port), handler)
     except OSError as exc:

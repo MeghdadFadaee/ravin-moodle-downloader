@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Browse the resources in a downloaded course.">
   <title>Course · Learning Library</title>
-  <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <link rel="stylesheet" href="assets/styles.css">
+  <script src="assets/app.js" defer></script>
 </head>
 <body data-page="course">
   <header class="topbar">
@@ -27,6 +27,11 @@
         <p class="eyebrow" id="courseCode">Course</p>
         <h1 id="courseTitle">Loading course…</h1>
         <p class="hero-copy" id="courseSummary"></p>
+        <div class="learning-states" aria-label="Course material status">
+          <span><strong id="transcriptState">0 / 0</strong> transcripts</span>
+          <span><strong id="summaryState">0 / 0</strong> summaries</span>
+          <span><strong id="assessmentState">0 / 0</strong> assessments</span>
+        </div>
         <a class="hero-source" id="courseSource" href="#" target="_blank" rel="noopener">Open in LMS ↗</a>
       </div>
       <div class="progress-panel">

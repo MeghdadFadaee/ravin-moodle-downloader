@@ -8,7 +8,6 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Iterable
 
-from .constants import CONTENT_SCHEMA_VERSION
 from .models import FileItem, MoodleError
 
 
@@ -73,6 +72,7 @@ def _discover_artifacts(activity_directory: Path, library: Path) -> dict[str, di
         "transcript": ("transcript.fa.txt", "text", "fa"),
         "transcript_metadata": ("transcript.meta.json", "json", None),
         "summary": ("summary.fa.md", "markdown", "fa"),
+        "summary_metadata": ("summary.meta.json", "json", None),
         "questions": ("questions.fa.md", "markdown", "fa"),
     }
     artifacts: dict[str, dict[str, Any]] = {}
@@ -90,34 +90,6 @@ def _discover_artifacts(activity_directory: Path, library: Path) -> dict[str, di
             record["language"] = language
         artifacts[kind] = record
     return artifacts
-
-
-def _write_item_metadata(item: FileItem, activity_directory: Path, file_path: Path) -> Path:
-    metadata_path = activity_directory / "item.json"
-    metadata = _read_json_object(metadata_path)
-    files = [str(value) for value in metadata.get("files", []) if value]
-    relative_file = file_path.relative_to(activity_directory).as_posix()
-    if relative_file not in files:
-        files.append(relative_file)
-    metadata.update(
-        {
-            "schema_version": CONTENT_SCHEMA_VERSION,
-            "course_id": item.course_id,
-            "activity_id": item.activity_id,
-            "type": item.activity_type or "resource",
-            "title": re.sub(r"\s*فایل\s*$", "", item.activity).strip() or item.filename,
-            "position": item.activity_position,
-            "section": {
-                "id": item.section_id,
-                "number": item.section_number,
-                "title": item.chapter or item.section,
-            },
-            "description": item.description,
-            "files": files,
-        }
-    )
-    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return metadata_path
 
 
 def _filename_from_headers(headers: Any, url: str, fallback: str) -> str:

@@ -22,7 +22,6 @@ from .paths import (
     _filename_from_headers,
     _is_cloudflare_challenge,
     _unique,
-    _write_item_metadata,
 )
 
 
@@ -461,7 +460,6 @@ class MoodleClient:
         suggested_filename = _clean_name(item.filename, activity)
         destination = directory / suggested_filename
         if destination.exists() and not overwrite:
-            _write_item_metadata(item, activity_directory, destination)
             return destination
         temporary = destination.with_name(destination.name + ".part")
         if overwrite:
@@ -482,7 +480,6 @@ class MoodleClient:
                     if not temporary.exists() and response_filename != suggested_filename:
                         destination = directory / response_filename
                         if destination.exists() and not overwrite:
-                            _write_item_metadata(item, activity_directory, destination)
                             return destination
                         temporary = destination.with_name(destination.name + ".part")
                         resume_at = temporary.stat().st_size if temporary.exists() else 0
@@ -542,7 +539,6 @@ class MoodleClient:
                             f"connection closed early at {downloaded} of {expected_total} bytes"
                         )
                 temporary.replace(destination)
-                _write_item_metadata(item, activity_directory, destination)
                 if sys.stderr.isatty():
                     elapsed = max(time.monotonic() - started, 0.01)
                     rate = downloaded / 1024 / 1024 / elapsed
