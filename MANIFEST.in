@@ -4,3 +4,5 @@ include CONTRIBUTING.md
 include SECURITY.md
 include CHANGELOG.md
 include .env.example
+recursive-include src/ravin/assets *.html *.css *.js
+recursive-include tests *.py

@@ -10,8 +10,8 @@ Contributions are welcome. Keep changes focused, dependency-free where practical
 4. Run:
 
    ```bash
-   python3 -m unittest -v
-   python3 -m py_compile ravin_downloader.py
+   python3 -m unittest discover -s tests -v
+   python3 -m compileall -q src tests
    ```
 
 5. Open a pull request describing the problem, approach, and test coverage.

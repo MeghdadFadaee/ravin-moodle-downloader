@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented here.
 
+## 0.5.0 - 2026-08-04
+
+- Replace the `ravin-downloader` console command with the shorter `ravin` command.
+- Make browser automation part of the default installation, so `python3 -m pip install .` is sufficient.
+- Move the project into a standard `src/ravin/` package layout.
+- Split the former monolithic module into dedicated CLI, authentication, client, parser, path, catalog, migration, server, and model modules.
+- Move static library assets into the package and move tests under `tests/`.
+- Remove the old root module and its legacy installed package files.
+
+## 0.4.0 - 2026-08-04
+
+- Store downloads directly in ordered library activity bundles named `SECTION_NUMBER--ACTIVITY_POSITION--ACTIVITY_ID`.
+- Preserve original filenames while keeping LMS titles and activity metadata in portable `item.json` files.
+- Add an offline `migrate-library` command for the previous flat download layout.
+- Normalize transcript metadata and summary references so they contain no machine-specific absolute paths.
+- Place local exams in their actual LMS position and expose them as assessment records.
+- Add built-in transcript, summary, and Markdown exam-question readers to the static library.
+- Remove the download-directory media symlink; the library is now the only served content root.
+
 ## 0.3.0 - 2026-08-02
 
 - Add a generated static Learning Library with responsive course and resource pages.

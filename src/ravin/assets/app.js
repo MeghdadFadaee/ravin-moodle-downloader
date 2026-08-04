@@ -25,6 +25,108 @@ function setText(id, value) {
   if (element) element.textContent = value;
 }
 
+function appendMarkdownInline(parent, text) {
+  const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\))/g;
+  let offset = 0;
+  for (const match of text.matchAll(pattern)) {
+    parent.append(document.createTextNode(text.slice(offset, match.index)));
+    const token = match[0];
+    if (token.startsWith("**")) {
+      const strong = document.createElement("strong");
+      strong.textContent = token.slice(2, -2);
+      parent.append(strong);
+    } else if (token.startsWith("`")) {
+      const code = document.createElement("code");
+      code.textContent = token.slice(1, -1);
+      parent.append(code);
+    } else {
+      const parts = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      const link = document.createElement("a");
+      link.textContent = parts[1];
+      if (/^(https?:\/\/|\.\.?\/)/.test(parts[2])) {
+        link.href = parts[2];
+        link.target = "_blank";
+        link.rel = "noopener";
+      }
+      parent.append(link);
+    }
+    offset = match.index + token.length;
+  }
+  parent.append(document.createTextNode(text.slice(offset)));
+}
+
+function markdownCells(line) {
+  return line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim());
+}
+
+function renderMarkdown(target, source) {
+  target.innerHTML = "";
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  let list = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) {
+      list = null;
+      continue;
+    }
+    const heading = line.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      list = null;
+      const element = document.createElement(`h${heading[1].length}`);
+      appendMarkdownInline(element, heading[2]);
+      target.append(element);
+      continue;
+    }
+    if (line.includes("|") && index + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[index + 1])) {
+      list = null;
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      markdownCells(line).forEach((cell) => {
+        const th = document.createElement("th");
+        appendMarkdownInline(th, cell);
+        headRow.append(th);
+      });
+      head.append(headRow);
+      table.append(head);
+      const body = document.createElement("tbody");
+      index += 2;
+      while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
+        const row = document.createElement("tr");
+        markdownCells(lines[index]).forEach((cell) => {
+          const td = document.createElement("td");
+          appendMarkdownInline(td, cell);
+          row.append(td);
+        });
+        body.append(row);
+        index += 1;
+      }
+      index -= 1;
+      table.append(body);
+      target.append(table);
+      continue;
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      const type = bullet ? "ul" : "ol";
+      if (!list || list.tagName.toLowerCase() !== type) {
+        list = document.createElement(type);
+        target.append(list);
+      }
+      const item = document.createElement("li");
+      appendMarkdownInline(item, (bullet || numbered)[1]);
+      list.append(item);
+      continue;
+    }
+    list = null;
+    const quote = line.match(/^>\s?(.*)$/);
+    const paragraph = document.createElement(quote ? "blockquote" : "p");
+    appendMarkdownInline(paragraph, quote ? quote[1] : line);
+    target.append(paragraph);
+  }
+}
+
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem("ravin-library-theme", theme);
@@ -54,7 +156,7 @@ function showLoadError(error) {
   const title = document.createElement("strong");
   title.textContent = "The course data could not be loaded";
   const detail = document.createElement("span");
-  detail.textContent = "Open this library with ‘ravin-downloader serve-library’, then refresh the page.";
+  detail.textContent = "Open this library with ‘ravin serve-library’, then refresh the page.";
   box.append(title, detail);
   target.append(box);
   console.error(error);
@@ -163,6 +265,25 @@ function resourceRow(item, index) {
     description.dir = "auto";
     description.textContent = item.description;
     main.append(description);
+  }
+  const artifactLabels = {
+    questions: "Questions",
+    summary: "Summary",
+    transcript: "Transcript",
+  };
+  const availableArtifacts = Object.keys(artifactLabels).filter((kind) => item.artifacts?.[kind]?.url);
+  if (availableArtifacts.length) {
+    const artifactActions = document.createElement("div");
+    artifactActions.className = "artifact-actions";
+    availableArtifacts.forEach((kind) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "artifact-button";
+      button.textContent = artifactLabels[kind];
+      button.addEventListener("click", () => openArtifact(item, kind));
+      artifactActions.append(button);
+    });
+    main.append(artifactActions);
   }
 
   const meta = document.createElement("div");
@@ -274,6 +395,39 @@ function closeVideo() {
   dialog.close();
 }
 
+async function openArtifact(item, kind) {
+  const artifact = item.artifacts?.[kind];
+  if (!artifact) return;
+  const dialog = byId("artifactDialog");
+  const content = byId("artifactContent");
+  const labels = { questions: "Exam questions", summary: "Lesson summary", transcript: "Transcript" };
+  setText("artifactEyebrow", labels[kind] || "Course material");
+  setText("artifactTitle", item.title);
+  content.innerHTML = '<p class="artifact-loading">Loading…</p>';
+  dialog.showModal();
+  try {
+    const response = await fetch(artifact.url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`Could not load ${artifact.url} (${response.status})`);
+    const source = await response.text();
+    if (artifact.format === "markdown") renderMarkdown(content, source);
+    else {
+      content.innerHTML = "";
+      const transcript = document.createElement("pre");
+      transcript.className = "transcript-text";
+      transcript.textContent = source;
+      content.append(transcript);
+    }
+  } catch (error) {
+    content.textContent = "This material could not be loaded.";
+    console.error(error);
+  }
+}
+
+function closeArtifact() {
+  byId("artifactDialog").close();
+  byId("artifactContent").innerHTML = "";
+}
+
 function renderCourse() {
   const id = new URLSearchParams(window.location.search).get("id");
   state.course = state.catalog.courses.find((course) => String(course.id) === String(id));
@@ -307,6 +461,10 @@ function renderCourse() {
   byId("closeMedia").addEventListener("click", closeVideo);
   byId("mediaDialog").addEventListener("click", (event) => {
     if (event.target === byId("mediaDialog")) closeVideo();
+  });
+  byId("closeArtifact").addEventListener("click", closeArtifact);
+  byId("artifactDialog").addEventListener("click", (event) => {
+    if (event.target === byId("artifactDialog")) closeArtifact();
   });
   renderResources();
 }

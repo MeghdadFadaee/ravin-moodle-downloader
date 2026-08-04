@@ -10,26 +10,34 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from ravin_downloader import (
-    Course,
-    FileItem,
-    MoodleClient,
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from ravin import Course, FileItem, MoodleClient
+from ravin.auth import (
+    _browser_login_url,
+    _capture_browser_session,
+    _load_env_file,
+    _save_env_values,
+)
+from ravin.cli import build_parser
+from ravin.library import (
+    _build_library_catalog,
+    _migrate_legacy_downloads,
+    _reuse_library_catalog,
+    _write_library_site,
+)
+from ravin.parsers import (
     _CourseStructureParser,
     _FormParser,
     _LinkParser,
+    _parse_moodle_config,
+)
+from ravin.paths import (
+    _activity_directory_name,
     _clean_name,
-    _browser_login_url,
-    _build_library_catalog,
-    _capture_browser_session,
     _filename_from_headers,
     _is_cloudflare_challenge,
-    _load_env_file,
-    _parse_moodle_config,
-    _reuse_library_catalog,
-    _save_env_values,
-    _write_library_site,
     _unique,
-    build_parser,
 )
 
 
@@ -249,6 +257,7 @@ class ParserTests(unittest.TestCase):
 
     def test_sanitizes_names_and_deduplicates_files(self):
         self.assertEqual(_clean_name('Week 1: Intro/Setup?'), "Week 1_ Intro_Setup_")
+        self.assertEqual(_activity_directory_name(17, 2, 5201), "017--002--5201")
         item = FileItem(44, "Chapter 1", "Intro", "1.mp4", "https://x/pluginfile.php/1/1.mp4?token=a")
         duplicate = FileItem(44, "Other", "Other", "1.mp4", "https://x/pluginfile.php/1/1.mp4?token=b")
         self.assertEqual(_unique([item, duplicate]), [item])
@@ -280,7 +289,7 @@ class ParserTests(unittest.TestCase):
             )
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
 
-    def test_builds_static_library_catalog_from_downloads(self):
+    def test_builds_static_library_catalog_from_library_content(self):
         class FakeClient:
             site = "https://training.example"
 
@@ -298,6 +307,11 @@ class ParserTests(unittest.TestCase):
                         "https://training.example/pluginfile.php/10/1.mp4?token=secret",
                         "video/mp4",
                         10,
+                        section_id=940,
+                        section_number=2,
+                        activity_id=4940,
+                        activity_type="resource",
+                        activity_position=1,
                     ),
                     FileItem(
                         44,
@@ -307,49 +321,50 @@ class ParserTests(unittest.TestCase):
                         "https://training.example/pluginfile.php/11/notes.pdf",
                         "application/pdf",
                         20,
+                        section_id=941,
+                        section_number=3,
+                        activity_id=4941,
+                        activity_type="resource",
+                        activity_position=1,
                     ),
                 ]
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            downloads = root / "downloads"
             output = root / "library"
-            video = downloads / "44" / "Course files" / "1.mp4"
+            video = output / "courses" / "44" / "content" / "002--001--4940" / "files" / "1.mp4"
             video.parent.mkdir(parents=True)
             video.write_bytes(b"video")
-            catalog = _build_library_catalog(FakeClient(), downloads, output)
+            catalog = _build_library_catalog(FakeClient(), output)
             self.assertEqual(catalog["stats"]["courses"], 1)
             self.assertEqual(catalog["stats"]["downloaded_files"], 1)
             items = catalog["courses"][0]["sections"][0]["items"]
             self.assertEqual(items[0]["title"], "Introduction")
             self.assertEqual(items[0]["kind"], "video")
             self.assertEqual(items[0]["status"], "downloaded")
-            self.assertEqual(items[0]["local_url"], "media/44/Course%20files/1.mp4")
+            self.assertEqual(items[0]["local_url"], "courses/44/content/002--001--4940/files/1.mp4")
             self.assertEqual(items[1]["status"], "missing")
-            catalog_path = _write_library_site(output, catalog, downloads)
+            catalog_path = _write_library_site(output, catalog)
             written = json.loads(catalog_path.read_text(encoding="utf-8"))
-            self.assertEqual(written["schema_version"], 2)
+            self.assertEqual(written["schema_version"], 3)
             self.assertTrue((output / "index.html").is_file())
             self.assertTrue((output / "course.html").is_file())
-            self.assertTrue((output / "media").is_symlink())
-            self.assertEqual((output / "media").resolve(), downloads.resolve())
+            self.assertTrue((output / "courses" / "44" / "course.json").is_file())
             nginx_config = (output / "nginx-server.conf").read_text(encoding="utf-8")
             self.assertIn(f"root \"{output.resolve()}\";", nginx_config)
             self.assertNotIn(str(root / ".env"), nginx_config)
 
-    def test_reuses_catalog_and_migrates_old_download_links(self):
+    def test_reuses_catalog_and_refreshes_library_links(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             output = root / "library"
-            downloads = root / "downloads"
-            media = downloads / "44" / "Course files" / "1.mp4"
+            media = output / "courses" / "44" / "content" / "002--001--4940" / "files" / "1.mp4"
             media.parent.mkdir(parents=True)
             media.write_bytes(b"video")
-            (downloads / "44" / "files-map.txt").write_text(
-                "  1.          ?  Course files / Introduction to Networks فایل / 1.mp4\n",
+            (media.parent.parent / "item.json").write_text(
+                json.dumps({"files": ["files/1.mp4"]}),
                 encoding="utf-8",
             )
-            output.mkdir()
             (output / "courses.json").write_text(
                 json.dumps(
                     {
@@ -359,13 +374,15 @@ class ParserTests(unittest.TestCase):
                                 "sections": [
                                     {
                                         "items": [
-                                            {"local_url": "../downloads/44/Course%20files/1.mp4"},
                                             {
                                                 "local_url": None,
-                                                "filename": "",
+                                                "filename": "1.mp4",
                                                 "activity_type": "resource",
                                                 "title": "Introduction to Networks",
                                                 "status": "online",
+                                                "section_number": 2,
+                                                "activity_position": 1,
+                                                "activity_id": 4940,
                                             },
                                         ]
                                     }
@@ -376,13 +393,10 @@ class ParserTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            catalog = _reuse_library_catalog(output, downloads)
+            catalog = _reuse_library_catalog(output)
             item = catalog["courses"][0]["sections"][0]["items"][0]
-            self.assertEqual(item["local_url"], "media/44/Course%20files/1.mp4")
-            recovered = catalog["courses"][0]["sections"][0]["items"][1]
-            self.assertEqual(recovered["filename"], "1.mp4")
-            self.assertEqual(recovered["status"], "downloaded")
-            self.assertEqual(recovered["kind"], "video")
+            self.assertEqual(item["local_url"], "courses/44/content/002--001--4940/files/1.mp4")
+            self.assertEqual(item["status"], "downloaded")
             self.assertIn("prepared_at", catalog)
 
     def test_interrupted_download_retries_with_range(self):
@@ -394,7 +408,10 @@ class ParserTests(unittest.TestCase):
         )
         second = _FakeResponse([b"!!"], status=206, content_range="bytes 8-9/10")
         client = _FakeDownloadClient([first, second])
-        item = FileItem(44, "Course files", "Lesson", "file.bin", "https://training.example/file.bin")
+        item = FileItem(
+            44, "Course files", "Lesson", "file.bin", "https://training.example/file.bin",
+            section_number=2, activity_id=4940, activity_position=1,
+        )
         with tempfile.TemporaryDirectory() as directory:
             destination = client.download(item, Path(directory), retries=1, retry_delay=0)
             self.assertEqual(destination.read_bytes(), b"abcdexyz!!")
@@ -403,14 +420,95 @@ class ParserTests(unittest.TestCase):
     def test_existing_partial_download_is_resumed(self):
         response = _FakeResponse([b"67890"], status=206, content_range="bytes 5-9/10")
         client = _FakeDownloadClient([response])
-        item = FileItem(44, "Course files", "Lesson", "file.bin", "https://training.example/file.bin")
+        item = FileItem(
+            44, "Course files", "Lesson", "file.bin", "https://training.example/file.bin",
+            section_number=2, activity_id=4940, activity_position=1,
+        )
         with tempfile.TemporaryDirectory() as directory:
-            partial = Path(directory) / "44" / "Course files" / "file.bin.part"
+            partial = Path(directory) / "courses" / "44" / "content" / "002--001--4940" / "files" / "file.bin.part"
             partial.parent.mkdir(parents=True)
             partial.write_bytes(b"12345")
             destination = client.download(item, Path(directory), retries=0, retry_delay=0)
             self.assertEqual(destination.read_bytes(), b"1234567890")
         self.assertEqual(client.request_headers, [{"Range": "bytes=5-"}])
+
+    def test_migrates_legacy_video_artifacts_and_exam_in_course_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "downloads"
+            library = root / "library"
+            course_files = source / "44" / "Course files"
+            exams = source / "44" / "Course exams"
+            course_files.mkdir(parents=True)
+            exams.mkdir(parents=True)
+            (course_files / "15.mp4").write_bytes(b"video")
+            (course_files / "15.mp4.txt").write_text("transcript", encoding="utf-8")
+            (course_files / "15.mp4.txt.json").write_text(
+                json.dumps({"source": "/private/15.mp4", "transcript": "/private/15.mp4.txt"}),
+                encoding="utf-8",
+            )
+            (course_files / "15.mp4.md").write_text("**منبع:** private/path\n\nSummary", encoding="utf-8")
+            (exams / "041264.pdf").write_bytes(b"exam")
+            (exams / "041264.md").write_text("# Questions", encoding="utf-8")
+            library.mkdir()
+            (library / "courses.json").write_text(
+                json.dumps(
+                    {
+                        "courses": [
+                            {
+                                "id": 44,
+                                "sections": [
+                                    {
+                                        "id": 847,
+                                        "number": 16,
+                                        "name": "Chapter 15",
+                                        "items": [
+                                            {
+                                                "activity_id": 4954,
+                                                "activity_position": 1,
+                                                "activity_type": "resource",
+                                                "section_id": 847,
+                                                "section_number": 16,
+                                                "title": "Lesson 15",
+                                                "filename": "15.mp4",
+                                                "mimetype": "video/mp4",
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        "id": 924,
+                                        "number": 17,
+                                        "name": "تمرین اول",
+                                        "items": [
+                                            {
+                                                "activity_id": 5201,
+                                                "activity_position": 2,
+                                                "activity_type": "quiz",
+                                                "section_id": 924,
+                                                "section_number": 17,
+                                                "title": "تمرین اول",
+                                                "filename": "",
+                                            }
+                                        ],
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = _migrate_legacy_downloads(source, library, [44])
+            self.assertEqual(result["courses"][0]["moved_files"], 6)
+            lesson = library / "courses" / "44" / "content" / "016--001--4954"
+            exam = library / "courses" / "44" / "content" / "017--002--5201"
+            self.assertEqual((lesson / "files" / "15.mp4").read_bytes(), b"video")
+            metadata = json.loads((lesson / "artifacts" / "transcript.meta.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["source"], "../files/15.mp4")
+            self.assertEqual(metadata["transcript"], "transcript.fa.txt")
+            self.assertTrue((exam / "files" / "041264.pdf").is_file())
+            self.assertTrue((exam / "artifacts" / "questions.fa.md").is_file())
+            self.assertFalse((source / "44").exists())
 
 
 if __name__ == "__main__":
