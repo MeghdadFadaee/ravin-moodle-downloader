@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from .migration import migrate_library_to_public
 from .models import MoodleError
 from .scan import format_scan, scan_offline, scan_output, scan_remote, update_download_state
 from .server import _serve_library
+from .transcribe import TranscriptionOptions, format_transcription_result, transcribe_courses
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,6 +73,40 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser.add_argument("--retries", type=int, default=5, help="retry interrupted files (default: 5)")
     download_parser.add_argument("--json", action="store_true", help="print downloaded paths as JSON")
 
+    transcribe_parser = subparsers.add_parser(
+        "transcribe",
+        help="transcribe downloaded course media with Whisper",
+    )
+    transcribe_parser.add_argument(
+        "course_ids", nargs="*", type=int, help="optional course IDs; defaults to all local courses"
+    )
+    transcribe_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    transcribe_parser.add_argument("--model", help="Whisper model; defaults to WHISPER_MODEL or large")
+    transcribe_parser.add_argument(
+        "--device", choices=("auto", "cpu", "cuda", "mps"), help="compute device; defaults to auto"
+    )
+    transcribe_parser.add_argument(
+        "--language", help="Whisper language code; use 'auto' for detection (default: fa)"
+    )
+    transcribe_parser.add_argument(
+        "--retries", type=int, default=2, help="additional attempts per failed file (default: 2)"
+    )
+    transcribe_parser.add_argument("--overwrite", action="store_true", help="replace matching transcripts")
+    transcribe_parser.add_argument("--dry-run", action="store_true", help="show pending media without loading Whisper")
+    transcribe_parser.add_argument(
+        "--keep-awake",
+        action=argparse.BooleanOptionalAction,
+        default=sys.platform == "darwin",
+        help="prevent macOS sleep while running (default: enabled on macOS)",
+    )
+    transcribe_parser.add_argument(
+        "--validate-media",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="check for a readable audio stream with ffprobe (default: enabled)",
+    )
+    transcribe_parser.add_argument("--json", action="store_true", help="print the final result as JSON")
+
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address")
@@ -118,13 +154,43 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         public = getattr(args, "public", Path("public")).expanduser().resolve()
-        if args.command in {"scan", "download"}:
+        if args.command in {"scan", "download", "transcribe"}:
             _maybe_migrate(public)
 
         if args.command == "scan" and args.offline:
             catalog = scan_offline(public, args.course_ids)
             print(json.dumps(scan_output(catalog), ensure_ascii=False, indent=2) if args.json else format_scan(catalog))
             return 0
+
+        if args.command == "transcribe":
+            env_values = _load_env_file(args.env_file)
+            model = args.model or env_values.get("WHISPER_MODEL") or os.getenv("WHISPER_MODEL") or "large"
+            device = args.device or env_values.get("WHISPER_DEVICE") or os.getenv("WHISPER_DEVICE") or "auto"
+            language_value = (
+                args.language
+                if args.language is not None
+                else env_values.get("WHISPER_LANGUAGE", os.getenv("WHISPER_LANGUAGE", "fa"))
+            )
+            language = None if not language_value or language_value.casefold() == "auto" else language_value
+            result = transcribe_courses(
+                TranscriptionOptions(
+                    public=public,
+                    course_ids=tuple(args.course_ids),
+                    model=model,
+                    device=device,
+                    language=language,
+                    retries=args.retries,
+                    overwrite=args.overwrite,
+                    dry_run=args.dry_run,
+                    keep_awake=args.keep_awake,
+                    validate_media=args.validate_media,
+                )
+            )
+            print(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+                if args.json else format_transcription_result(result)
+            )
+            return result.exit_code
 
         args.env_values = _load_env_file(args.env_file)
         if args.command == "login":

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## 0.7.0 - 2026-08-04
+
+- Add a manifest-driven `ravin transcribe` command using OpenAI Whisper.
+- Discover downloaded video and audio in LMS order and update course manifests after every result.
+- Resume safely by matching source metadata, Whisper model, and language before skipping completed transcripts.
+- Validate media with FFprobe, retry individual failures, continue with later lessons, and persist private run state and error logs.
+- Record failed transcript state in course manifests without exposing machine-specific paths.
+- Keep macOS awake during long runs and preserve atomic transcript and metadata writes across interruption.
+- Add the optional `transcribe` dependency group for the large Whisper and PyTorch runtime.
+
 ## 0.6.0 - 2026-08-04
 
 - Replace the separate course, file, and library builders with one `ravin scan` command.

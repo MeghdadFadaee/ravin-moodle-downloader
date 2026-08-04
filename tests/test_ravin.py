@@ -93,6 +93,10 @@ class ParserTests(unittest.TestCase):
         download = build_parser().parse_args(["download", "44", "--retries", "2"])
         self.assertEqual(download.course_id, 44)
         self.assertEqual(download.retries, 2)
+        transcribe = build_parser().parse_args(["transcribe", "44", "--model", "small", "--no-keep-awake"])
+        self.assertEqual(transcribe.course_ids, [44])
+        self.assertEqual(transcribe.model, "small")
+        self.assertFalse(transcribe.keep_awake)
         serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 

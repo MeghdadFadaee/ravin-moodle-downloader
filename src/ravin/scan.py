@@ -94,8 +94,11 @@ def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> st
     artifacts = activity_directory / "artifacts"
     if kind == "transcript":
         transcript = artifacts / "transcript.fa.txt"
+        failed = (artifacts / ".transcript.error.json").is_file()
         if not transcript.is_file():
-            return "missing" if applicable else "not_applicable"
+            if not applicable:
+                return "not_applicable"
+            return "error" if failed else "missing"
         metadata = _read_json_object(artifacts / "transcript.meta.json")
         source_files: list[Path] = []
         source_name = metadata.get("source") if metadata else None
@@ -114,14 +117,14 @@ def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> st
                 if path.is_file() and not path.name.endswith(".part")
             )
         if not metadata or not source_files:
-            return "stale"
+            return "error" if failed else "stale"
         source_stat = source_files[0].stat()
         expected_size = metadata.get("source_size")
         expected_mtime = metadata.get("source_mtime_ns")
         if expected_size is not None and int(expected_size) != source_stat.st_size:
-            return "stale"
+            return "error" if failed else "stale"
         if expected_mtime is not None and int(expected_mtime) != source_stat.st_mtime_ns:
-            return "stale"
+            return "error" if failed else "stale"
         return "complete"
 
     if kind == "summary":
@@ -232,7 +235,9 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 state_counts["assessments"]["complete"] += int(questions_state == "complete")
             state_counts["partial"] += int(download_state == "partial")
             state_counts["stale"] += sum(value == "stale" for value in (transcript_state, summary_state))
-            state_counts["errors"] += int(download_state == "error")
+            state_counts["errors"] += sum(
+                value == "error" for value in (download_state, transcript_state, summary_state, questions_state)
+            )
             kind = str(item.get("kind") or "activity")
             type_counts[kind] = type_counts.get(kind, 0) + 1
 

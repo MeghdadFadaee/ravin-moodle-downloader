@@ -1,6 +1,6 @@
 # Ravin Moodle Downloader
 
-A small command-line client for scanning authorized Moodle courses, downloading their files, and browsing them in a private static learning library. It defaults to Ravin Academy and can target another Moodle base URL with `--site`.
+A small command-line client for scanning authorized Moodle courses, downloading and transcribing their files, and browsing them in a private static learning library. It defaults to Ravin Academy and can target another Moodle base URL with `--site`.
 
 The client tries Moodle's mobile API first, falls back to its authenticated web interface, and can establish a real browser session for sites protected by Cloudflare.
 
@@ -14,6 +14,7 @@ Requirements:
 - Python 3.10 or newer
 - An active enrollment on the target Moodle site
 - Zen, Firefox, Chrome, Chromium, or Brave for automatic browser login
+- FFmpeg when using local Whisper transcription
 
 From the repository root:
 
@@ -23,12 +24,20 @@ python3 -m pip install .
 
 This installs the `ravin` command and its browser automation dependency. The equivalent module entry point is `python3 -m ravin`.
 
+Whisper and PyTorch are large, platform-specific dependencies, so install them only on the machine that will transcribe media:
+
+```bash
+brew install ffmpeg
+python3 -m pip install '.[transcribe]'
+```
+
 ## Quick start
 
 ```bash
 ravin login
 ravin scan
 ravin download COURSE_ID
+ravin transcribe COURSE_ID
 ravin serve --open
 ```
 
@@ -102,6 +111,60 @@ The scanner reports each applicable file, transcript, summary, and assessment as
 
 The downloader updates the course manifest after every completed file. A final offline scan reconciles all totals, so an interrupted run still retains useful progress.
 
+## Whisper transcription
+
+After downloading a course, transcribe its video and audio in LMS order:
+
+```bash
+ravin transcribe 44
+```
+
+The command reads local course manifests and does not contact or log in to the LMS. With no course IDs it processes all local courses:
+
+```bash
+ravin transcribe
+```
+
+Each successful lesson produces `artifacts/transcript.fa.txt` and portable `artifacts/transcript.meta.json`. The course manifest and global catalog are reconciled after every file, so the transcript becomes available in the library immediately.
+
+Long runs are designed to resume safely:
+
+- Existing output is skipped only when its source size and modification time, Whisper model, and language still match.
+- FFprobe validates the audio stream before Whisper starts.
+- Each failed validation or transcription is retried twice by default, for three total attempts.
+- A permanently failed lesson is recorded and the next lesson still runs.
+- Transcript and metadata writes are atomic, so interruption cannot leave a completed-looking partial file.
+- macOS sleep is prevented by default while transcription is active.
+- `SIGINT` and `SIGTERM` preserve completed work and write an interrupted state for the next run.
+
+Private run state, the final summary, and the append-only error log live under `.ravin/transcribe/`, outside the served `public/` directory. Rerun the same command to skip completed work and retry failures.
+
+Useful options:
+
+```bash
+# Preview pending lessons without loading Whisper.
+ravin transcribe 44 --dry-run
+
+# Use a smaller model or automatic language detection.
+ravin transcribe 44 --model small --language auto
+
+# Replace even matching transcripts.
+ravin transcribe 44 --overwrite
+
+# Change the retry count or allow macOS to sleep.
+ravin transcribe 44 --retries 4 --no-keep-awake
+```
+
+The defaults can also be stored in `.env`:
+
+```dotenv
+WHISPER_MODEL="large"
+WHISPER_DEVICE="auto"
+WHISPER_LANGUAGE="fa"
+```
+
+The `large` model needs substantial memory. Use `small` or `turbo` if the machine cannot load it. The first run may download model weights.
+
 ## Static learning library
 
 The web interface is already present in the tracked `public/` directory. Generate or refresh its private data, then serve it:
@@ -162,6 +225,7 @@ When an older generated `library/courses.json` exists and `public/` has no manif
 ravin login
 ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
 ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
+ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
 ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 
@@ -180,6 +244,7 @@ src/ravin/
 ├── paths.py        # portable content paths and artifacts
 ├── catalog.py      # remote course catalog construction
 ├── scan.py         # manifests and local state reconciliation
+├── transcribe.py   # resilient manifest-driven Whisper batches
 ├── migration.py    # previous-layout migration
 ├── server.py       # local range-aware HTTP server
 └── models.py       # shared value objects and errors

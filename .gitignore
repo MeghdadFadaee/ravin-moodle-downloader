@@ -127,6 +127,7 @@ celerybeat.pid
 
 # Environments
 .env
+.ravin/
 .ravin-browser-profile/
 .venv
 env/
