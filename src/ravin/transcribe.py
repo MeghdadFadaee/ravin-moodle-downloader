@@ -202,13 +202,14 @@ class CourseTranscriber:
         options: TranscriptionOptions,
         *,
         model_loader: Callable[[str, str], tuple[Any, Any, str]] = _load_model,
-        media_validator: Callable[[Path], None] = _validate_media,
+        media_validator: Callable[[Path], None] | None = None,
         sleeper: Callable[[float], None] = time.sleep,
     ) -> None:
         self.options = options
         self.public = options.public.expanduser().resolve()
         self.model_loader = model_loader
-        self.media_validator = media_validator
+        self.media_validator = media_validator or _validate_media
+        self.requires_ffprobe = media_validator is None
         self.sleeper = sleeper
         self.runtime_root = self.public.parent / ".ravin" / "transcribe"
         self.state_path = self.runtime_root / "state.json"
@@ -421,7 +422,7 @@ class CourseTranscriber:
             return self.result
         if not pending:
             return self._finish("completed", 0)
-        if self.options.validate_media and not shutil.which("ffprobe"):
+        if self.options.validate_media and self.requires_ffprobe and not shutil.which("ffprobe"):
             raise MoodleError("FFmpeg is required; install it with `brew install ffmpeg`")
 
         self.result.status = "running"

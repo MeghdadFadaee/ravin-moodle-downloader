@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -102,7 +103,8 @@ class TranscriptionTests(unittest.TestCase):
     def test_success_updates_artifacts_manifest_and_resumes(self) -> None:
         self.write_course(["lesson.mp4"])
         model = FakeModel()
-        result = self.transcriber(model).run()
+        with patch("ravin.transcribe.shutil.which", return_value=None):
+            result = self.transcriber(model).run()
 
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.succeeded, 1)
