@@ -84,7 +84,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.command, "login")
         self.assertFalse(args.manual_session)
 
-    def test_scan_download_and_serve_commands_parse(self):
+    def test_scan_download_transcribe_summarize_and_serve_commands_parse(self):
         scan = build_parser().parse_args(["scan", "44", "--public", "site", "--offline", "--json"])
         self.assertEqual(scan.course_ids, [44])
         self.assertEqual(scan.public, Path("site"))
@@ -97,6 +97,9 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(transcribe.course_ids, [44])
         self.assertEqual(transcribe.model, "small")
         self.assertFalse(transcribe.keep_awake)
+        summarize = build_parser().parse_args(["summarize", "44", "--model", "gpt-test"])
+        self.assertEqual(summarize.course_ids, [44])
+        self.assertEqual(summarize.model, "gpt-test")
         serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 

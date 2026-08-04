@@ -43,3 +43,4 @@ jobs:
           python -m pip install .
           ravin --version
           ravin transcribe --help
+          ravin summarize --help

@@ -129,11 +129,14 @@ def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> st
 
     if kind == "summary":
         summary = artifacts / "summary.fa.md"
+        failed = (artifacts / ".summary.error.json").is_file()
         if not summary.is_file():
-            return "missing" if applicable else "not_applicable"
+            if not applicable:
+                return "not_applicable"
+            return "error" if failed else "missing"
         transcript = artifacts / "transcript.fa.txt"
         if not transcript.is_file():
-            return "stale"
+            return "error" if failed else "stale"
         metadata_path = artifacts / "summary.meta.json"
         metadata = _read_json_object(metadata_path)
         current = _summary_metadata(summary, transcript)
@@ -145,7 +148,7 @@ def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> st
             or int(metadata.get("source_size") or -1) != current["source_size"]
             or int(metadata.get("source_mtime_ns") or -1) != current["source_mtime_ns"]
         ):
-            return "stale"
+            return "error" if failed else "stale"
         return "complete"
 
     questions = artifacts / "questions.fa.md"

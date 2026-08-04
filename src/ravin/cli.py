@@ -21,6 +21,7 @@ from .migration import migrate_library_to_public
 from .models import MoodleError
 from .scan import format_scan, scan_offline, scan_output, scan_remote, update_download_state
 from .server import _serve_library
+from .summarize import SummaryOptions, format_summary_result, summarize_courses
 from .transcribe import TranscriptionOptions, format_transcription_result, transcribe_courses
 
 
@@ -107,6 +108,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     transcribe_parser.add_argument("--json", action="store_true", help="print the final result as JSON")
 
+    summarize_parser = subparsers.add_parser(
+        "summarize",
+        help="generate Persian study summaries from transcripts with Codex CLI",
+    )
+    summarize_parser.add_argument(
+        "course_ids", nargs="*", type=int, help="optional course IDs; defaults to all local courses"
+    )
+    summarize_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    summarize_parser.add_argument(
+        "--model", help="Codex model override; defaults to CODEX_SUMMARY_MODEL or Codex configuration"
+    )
+    summarize_parser.add_argument(
+        "--retries", type=int, default=2, help="additional attempts per failed transcript (default: 2)"
+    )
+    summarize_parser.add_argument(
+        "--timeout", type=int, default=1800, help="maximum seconds for each Codex attempt (default: 1800)"
+    )
+    summarize_parser.add_argument("--overwrite", action="store_true", help="replace matching summaries")
+    summarize_parser.add_argument("--dry-run", action="store_true", help="show pending transcripts without using Codex")
+    summarize_parser.add_argument(
+        "--keep-awake",
+        action=argparse.BooleanOptionalAction,
+        default=sys.platform == "darwin",
+        help="prevent macOS sleep while running (default: enabled on macOS)",
+    )
+    summarize_parser.add_argument("--json", action="store_true", help="print the final result as JSON")
+
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address")
@@ -154,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         public = getattr(args, "public", Path("public")).expanduser().resolve()
-        if args.command in {"scan", "download", "transcribe"}:
+        if args.command in {"scan", "download", "transcribe", "summarize"}:
             _maybe_migrate(public)
 
         if args.command == "scan" and args.offline:
@@ -189,6 +217,27 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
                 if args.json else format_transcription_result(result)
+            )
+            return result.exit_code
+
+        if args.command == "summarize":
+            env_values = _load_env_file(args.env_file)
+            model = args.model or env_values.get("CODEX_SUMMARY_MODEL") or os.getenv("CODEX_SUMMARY_MODEL")
+            result = summarize_courses(
+                SummaryOptions(
+                    public=public,
+                    course_ids=tuple(args.course_ids),
+                    model=model,
+                    retries=args.retries,
+                    timeout=args.timeout,
+                    overwrite=args.overwrite,
+                    dry_run=args.dry_run,
+                    keep_awake=args.keep_awake,
+                )
+            )
+            print(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+                if args.json else format_summary_result(result)
             )
             return result.exit_code
 

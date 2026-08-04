@@ -1,6 +1,6 @@
 # Ravin Moodle Downloader
 
-A small command-line client for scanning authorized Moodle courses, downloading and transcribing their files, and browsing them in a private static learning library. It defaults to Ravin Academy and can target another Moodle base URL with `--site`.
+A small command-line client for scanning authorized Moodle courses, downloading, transcribing, and summarizing their files, and browsing them in a private static learning library. It defaults to Ravin Academy and can target another Moodle base URL with `--site`.
 
 The client tries Moodle's mobile API first, falls back to its authenticated web interface, and can establish a real browser session for sites protected by Cloudflare.
 
@@ -15,6 +15,7 @@ Requirements:
 - An active enrollment on the target Moodle site
 - Zen, Firefox, Chrome, Chromium, or Brave for automatic browser login
 - FFmpeg when using local Whisper transcription
+- A logged-in Codex CLI installation when generating summaries
 
 From the repository root:
 
@@ -38,6 +39,7 @@ ravin login
 ravin scan
 ravin download COURSE_ID
 ravin transcribe COURSE_ID
+ravin summarize COURSE_ID
 ravin serve --open
 ```
 
@@ -165,6 +167,44 @@ WHISPER_LANGUAGE="fa"
 
 The `large` model needs substantial memory. Use `small` or `turbo` if the machine cannot load it. The first run may download model weights.
 
+## Codex summaries
+
+Generate Persian Markdown study guides from completed transcripts:
+
+```bash
+codex login
+ravin summarize 44 --dry-run
+ravin summarize 44
+```
+
+The command uses `codex exec` non-interactively with an ephemeral session, an empty temporary workspace, and a read-only sandbox. Transcript text is passed only through standard input as untrusted content, and Codex is instructed to return only a faithful Persian Markdown study guide without external research. The LMS is never contacted, and `.env` is not placed in the Codex workspace.
+
+Each successful lesson produces `artifacts/summary.fa.md` and portable `artifacts/summary.meta.json`. Existing summaries are skipped when their transcript hash, size, and modification time still match. Use `--overwrite` to regenerate them.
+
+Like transcription, summarization is safe to leave running:
+
+- Each failed Codex invocation is retried twice by default, then the batch continues.
+- Results and metadata are written atomically.
+- Course manifests are refreshed after every success or failure.
+- `SIGINT` and `SIGTERM` preserve completed work for the next run.
+- macOS sleep is prevented during active batches by default.
+- Missing transcripts are reported as unavailable and do not stop other lessons.
+
+Private state and error logs live under `.ravin/summarize/`. Useful options include:
+
+```bash
+# Override the model selected by your Codex configuration.
+ravin summarize 44 --model MODEL
+
+# Regenerate fresh summaries, allow more retries, or change the per-attempt timeout.
+ravin summarize 44 --overwrite --retries 4 --timeout 3600
+
+# Allow macOS to sleep.
+ravin summarize 44 --no-keep-awake
+```
+
+Set `CODEX_SUMMARY_MODEL` in `.env` to make a model override persistent. Leave it empty to use the model configured by Codex CLI.
+
 ## Static learning library
 
 The web interface is already present in the tracked `public/` directory. Generate or refresh its private data, then serve it:
@@ -226,6 +266,7 @@ ravin login
 ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
 ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
 ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
+ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
 ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 
@@ -245,6 +286,7 @@ src/ravin/
 ├── catalog.py      # remote course catalog construction
 ├── scan.py         # manifests and local state reconciliation
 ├── transcribe.py   # resilient manifest-driven Whisper batches
+├── summarize.py    # resilient Codex CLI study-guide batches
 ├── migration.py    # previous-layout migration
 ├── server.py       # local range-aware HTTP server
 └── models.py       # shared value objects and errors

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented here.
 
+## 0.8.0 - 2026-08-04
+
+- Add a manifest-driven `ravin summarize` command that generates Persian Markdown study guides with Codex CLI.
+- Run Codex non-interactively in an ephemeral, read-only sandbox and capture only its final response.
+- Skip summaries whose transcript hash and metadata still match, with an explicit overwrite option.
+- Retry individual failures, continue with later lessons, preserve interruption state, and keep macOS awake.
+- Update course manifests after every result and expose failed summary state without machine-specific paths.
+- Add configurable Codex model and per-attempt timeout options.
+
 ## 0.7.0 - 2026-08-04
 
 - Add a manifest-driven `ravin transcribe` command using OpenAI Whisper.
