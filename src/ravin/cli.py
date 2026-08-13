@@ -18,6 +18,7 @@ from .auth import (
 from .client import MoodleClient
 from .constants import DEFAULT_ENV_FILE, DEFAULT_RAVIN_LOGIN_URL, DEFAULT_SITE, ENV_KEYS, __version__
 from .exporter import export_courses, format_export_result
+from .importer import format_import_result, import_courses
 from .migration import migrate_library_to_public
 from .models import MoodleError
 from .questions import format_questions_result, import_questions, questions_wizard
@@ -187,6 +188,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     export_parser.add_argument("--json", action="store_true", help="print export details as JSON")
 
+    import_parser = subparsers.add_parser(
+        "import",
+        help="restore or update local courses from an export URL",
+        description="Download a Ravin course ZIP, merge it over local courses, and run an offline scan.",
+    )
+    import_parser.add_argument("url", help="direct http:// or https:// URL to a Ravin export ZIP")
+    import_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    import_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=60,
+        help="network read timeout in seconds (default: 60)",
+    )
+    import_parser.add_argument("--json", action="store_true", help="print import and scan details as JSON")
+
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address")
@@ -236,6 +252,7 @@ def main(argv: list[str] | None = None) -> int:
         public = getattr(args, "public", Path("public")).expanduser().resolve()
         if args.command in {
             "scan", "download", "transcribe", "summarize", "questions", "recording", "recordings", "export",
+            "import",
         }:
             _maybe_migrate(public)
 
@@ -250,6 +267,25 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
                 if args.json else format_export_result(result)
             )
+            return 0
+
+        if args.command == "import":
+            result, catalog = import_courses(
+                public,
+                args.url,
+                timeout=args.timeout,
+                progress=None if args.json else lambda message: print(message, file=sys.stderr),
+            )
+            if args.json:
+                print(json.dumps(
+                    {"import": result.to_dict(), "scan": scan_output(catalog)},
+                    ensure_ascii=False,
+                    indent=2,
+                ))
+            else:
+                print(format_import_result(result))
+                print()
+                print(format_scan(catalog))
             return 0
 
         if args.command == "scan" and args.offline:

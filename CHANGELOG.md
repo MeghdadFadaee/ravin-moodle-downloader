@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## 0.14.0 - 2026-08-13
+
+- Add `ravin import URL` for restoring backups and updating course mirrors from direct export links.
+- Validate ZIP structure, paths, links, duplicate entries, manifests, and file integrity before merging.
+- Preserve local-only files while giving archive files priority at matching paths.
+- Replace imported files atomically and automatically reconcile the complete library with an offline scan.
+- Add `--timeout`, `--public`, and machine-readable `--json` import options.
+
 ## 0.13.0 - 2026-08-13
 
 - Add a local `ravin export` command that creates timestamped archives under `public/exports/` from all scanned courses.

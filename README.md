@@ -43,6 +43,7 @@ ravin summarize COURSE_ID
 ravin questions
 ravin recording
 ravin export
+ravin import EXPORT_URL
 ravin serve --open
 ```
 
@@ -147,6 +148,18 @@ ravin export --output ~/Backups/ravin-courses.zip
 ```
 
 The archive always contains a top-level `courses/` directory, so it can be extracted into a compatible `public/` web root. Exports are built beside the destination and installed atomically; an interrupted run does not leave a broken ZIP. The destination must be outside `public/courses/`; use `--output` when you do not want an export exposed by the library server.
+
+### Restore or update from an export
+
+Import directly from another library server or backup location:
+
+```bash
+ravin import https://mirror.example/exports/2026-08-13_14-35-22.zip
+```
+
+The import is additive. Local files that are not present in the ZIP remain in place, while files at matching paths are replaced by the versions from the ZIP. Ravin downloads and fully validates the archive before changing local course data, rejects unsafe paths, merges each file atomically, and automatically runs an offline scan afterward. This makes the command suitable for restoring a backup or updating a mirror/clone.
+
+Use `--public PATH` for another library root, `--timeout SECONDS` for slow servers, or `--json` for machine-readable import and scan results. The URL must point directly to an export ZIP over HTTP or HTTPS.
 
 ## Exam questions and answers
 
@@ -370,6 +383,7 @@ ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS
 ravin questions [COURSE_ID] [ACTIVITY_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
 ravin recording [COURSE_ID] [ACTIVITY_ID] [VIDEO]
 ravin export [--output ARCHIVE.zip] [--include-videos] [--public PATH]
+ravin import URL [--timeout SECONDS] [--json] [--public PATH]
 ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 
@@ -393,6 +407,7 @@ src/ravin/
 ├── questions.py    # local exam-question and attachment imports
 ├── recordings.py   # local live-class recording imports
 ├── exporter.py     # atomic course ZIP exports
+├── importer.py     # safe URL restores and mirror updates
 ├── local_files.py  # atomic local copies and archived versions
 ├── wizard.py       # shared interactive import helpers
 ├── migration.py    # previous-layout migration

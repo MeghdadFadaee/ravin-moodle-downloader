@@ -127,6 +127,11 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(export.public, Path("site"))
         default_export = build_parser().parse_args(["export"])
         self.assertIsNone(default_export.output)
+        import_archive = build_parser().parse_args(
+            ["import", "https://mirror.example/exports/latest.zip", "--timeout", "120"]
+        )
+        self.assertEqual(import_archive.url, "https://mirror.example/exports/latest.zip")
+        self.assertEqual(import_archive.timeout, 120)
         serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 
