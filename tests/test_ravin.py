@@ -84,7 +84,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.command, "login")
         self.assertFalse(args.manual_session)
 
-    def test_scan_download_transcribe_summarize_and_serve_commands_parse(self):
+    def test_all_primary_commands_parse(self):
         scan = build_parser().parse_args(["scan", "44", "--public", "site", "--offline", "--json"])
         self.assertEqual(scan.course_ids, [44])
         self.assertEqual(scan.public, Path("site"))
@@ -100,6 +100,17 @@ class ParserTests(unittest.TestCase):
         summarize = build_parser().parse_args(["summarize", "44", "--model", "gpt-test"])
         self.assertEqual(summarize.course_ids, [44])
         self.assertEqual(summarize.model, "gpt-test")
+        questions = build_parser().parse_args(
+            ["questions", "44", "5679", "questions.fa.md", "--file", "5679.pdf"]
+        )
+        self.assertEqual(questions.course_id, 44)
+        self.assertEqual(questions.activity_id, 5679)
+        self.assertEqual(questions.questions, Path("questions.fa.md"))
+        self.assertEqual(questions.files, [Path("5679.pdf")])
+        questions_wizard = build_parser().parse_args(["questions"])
+        self.assertIsNone(questions_wizard.course_id)
+        self.assertIsNone(questions_wizard.activity_id)
+        self.assertIsNone(questions_wizard.questions)
         serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 

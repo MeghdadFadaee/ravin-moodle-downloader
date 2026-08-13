@@ -40,6 +40,7 @@ ravin scan
 ravin download COURSE_ID
 ravin transcribe COURSE_ID
 ravin summarize COURSE_ID
+ravin questions
 ravin serve --open
 ```
 
@@ -112,6 +113,46 @@ artifacts/
 The scanner reports each applicable file, transcript, summary, and assessment as `missing`, `partial`, `complete`, `stale`, or `error`. Non-applicable states are recorded as `not_applicable`. Transcript freshness is checked against its source file metadata; summary freshness is checked against the transcript hash.
 
 The downloader updates the course manifest after every completed file. A final offline scan reconciles all totals, so an interrupted run still retains useful progress.
+
+## Exam questions and answers
+
+Start the interactive import wizard:
+
+```bash
+ravin questions
+```
+
+The wizard:
+
+1. Lists local courses that contain exams.
+2. Lists the selected course's exams and their current question status.
+3. Prompts for the UTF-8 Markdown questions-and-answers file.
+4. Prompts for an optional original exam PDF.
+
+You can enter either a displayed list number or the actual course/activity ID. File paths can be pasted or dragged into the terminal.
+
+For scripting, all values can still be passed directly:
+
+```bash
+ravin questions 44 5679 ~/Downloads/questions.fa.md \
+  --file ~/Downloads/5679.pdf
+```
+
+The command finds the quiz in the course manifest and creates the correct ordered bundle automatically. For the example above, it writes:
+
+```text
+public/courses/44/content/026--001--5679/
+├── files/5679.pdf
+└── artifacts/questions.fa.md
+```
+
+Use `--file` more than once when an exam has multiple attachments. The attachment is optional when only updating questions or answers:
+
+```bash
+ravin questions 44 5679 revised-questions.fa.md
+```
+
+The import is local and requires no LMS login. Files are written atomically, the original attachment names are preserved, and the course manifest is refreshed immediately so the library exposes the exam under its **Questions** button.
 
 ## Whisper transcription
 
@@ -267,6 +308,7 @@ ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
 ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
 ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
 ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
+ravin questions [COURSE_ID] [ACTIVITY_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
 ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 
@@ -287,6 +329,7 @@ src/ravin/
 ├── scan.py         # manifests and local state reconciliation
 ├── transcribe.py   # resilient manifest-driven Whisper batches
 ├── summarize.py    # resilient Codex CLI study-guide batches
+├── questions.py    # local exam-question and attachment imports
 ├── migration.py    # previous-layout migration
 ├── server.py       # local range-aware HTTP server
 └── models.py       # shared value objects and errors

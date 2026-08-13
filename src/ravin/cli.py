@@ -19,6 +19,7 @@ from .client import MoodleClient
 from .constants import DEFAULT_ENV_FILE, DEFAULT_RAVIN_LOGIN_URL, DEFAULT_SITE, ENV_KEYS, __version__
 from .migration import migrate_library_to_public
 from .models import MoodleError
+from .questions import format_questions_result, import_questions, questions_wizard
 from .scan import format_scan, scan_offline, scan_output, scan_remote, update_download_state
 from .server import _serve_library
 from .summarize import SummaryOptions, format_summary_result, summarize_courses
@@ -135,6 +136,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     summarize_parser.add_argument("--json", action="store_true", help="print the final result as JSON")
 
+    questions_parser = subparsers.add_parser(
+        "questions",
+        help="interactively import or update questions for a local quiz",
+        description="Import exam questions with a course-and-quiz wizard; all positional values are optional.",
+    )
+    questions_parser.add_argument("course_id", nargs="?", type=int, help="course containing the quiz")
+    questions_parser.add_argument("activity_id", nargs="?", type=int, help="Moodle quiz activity ID")
+    questions_parser.add_argument("questions", nargs="?", type=Path, help="UTF-8 Markdown questions and answers")
+    questions_parser.add_argument(
+        "--file",
+        dest="files",
+        type=Path,
+        action="append",
+        default=[],
+        help="optional original exam attachment; repeat for multiple files",
+    )
+    questions_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    questions_parser.add_argument("--json", action="store_true", help="print imported paths as JSON")
+
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address")
@@ -182,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         public = getattr(args, "public", Path("public")).expanduser().resolve()
-        if args.command in {"scan", "download", "transcribe", "summarize"}:
+        if args.command in {"scan", "download", "transcribe", "summarize", "questions"}:
             _maybe_migrate(public)
 
         if args.command == "scan" and args.offline:
@@ -240,6 +260,34 @@ def main(argv: list[str] | None = None) -> int:
                 if args.json else format_summary_result(result)
             )
             return result.exit_code
+
+        if args.command == "questions":
+            interactive = args.course_id is None or args.activity_id is None or args.questions is None
+            course_id, activity_id, questions_path, attachment_paths = questions_wizard(
+                public,
+                args.course_id,
+                args.activity_id,
+                args.questions,
+                tuple(args.files),
+                prompt_for_attachment=interactive,
+            ) if interactive else (
+                args.course_id,
+                args.activity_id,
+                args.questions,
+                tuple(args.files),
+            )
+            result = import_questions(
+                public,
+                course_id,
+                activity_id,
+                questions_path,
+                attachment_paths,
+            )
+            print(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+                if args.json else format_questions_result(result)
+            )
+            return 0
 
         args.env_values = _load_env_file(args.env_file)
         if args.command == "login":

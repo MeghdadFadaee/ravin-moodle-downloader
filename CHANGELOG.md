@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## 0.9.0 - 2026-08-13
+
+- Add an interactive `ravin questions` wizard for importing or updating Markdown exam questions.
+- List local courses and their quiz activities, including current question status, for guided selection.
+- Resolve the ordered activity bundle from the course manifest instead of requiring manual directory naming.
+- Support repeatable `--file` options for original PDFs and other exam attachments.
+- Validate quiz activities and UTF-8 Markdown, write files atomically, and refresh manifests without LMS login.
+
 ## 0.8.0 - 2026-08-04
 
 - Add a manifest-driven `ravin summarize` command that generates Persian Markdown study guides with Codex CLI.

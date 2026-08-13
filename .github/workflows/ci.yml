@@ -44,3 +44,4 @@ jobs:
           ravin --version
           ravin transcribe --help
           ravin summarize --help
+          ravin questions --help
