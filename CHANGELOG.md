@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## 0.13.0 - 2026-08-13
+
+- Add a local `ravin export` command that creates timestamped archives under `public/exports/` from all scanned courses.
+- Exclude current and archived videos by default while retaining other course files and learning artifacts.
+- Add `--include-videos`, `--output`, `--public`, and machine-readable `--json` options.
+- Build ZIP files atomically with ZIP64 support and skip partial downloads, locks, and platform metadata.
+- Keep export destinations outside the course data directory and ignore generated public exports in Git.
+
 ## 0.12.0 - 2026-08-13
 
 - Add per-category missing, partial, stale, and error details to scan output.
@@ -14,12 +22,12 @@ All notable changes to this project will be documented here.
 
 ## 0.11.0 - 2026-08-13
 
-- Add a `ravin recording` wizard for attaching local videos to Moodle live-class activities.
+[- Add a `ravin recording` wizard for attaching local videos to Moodle live-class activities.
 - Make imported recordings available to the existing Whisper transcription and Codex summarization pipelines.
 - Preserve replaced recordings as archived versions and expose current and archived files in the library.
 - Keep the selected current recording across later online LMS scans with portable local metadata.
 - Accept pasted interactive file paths containing spaces without requiring shell quoting.
-
+]()
 ## 0.10.0 - 2026-08-13
 
 - Track the Moodle-selected resource as current while retaining other local files as archived versions.

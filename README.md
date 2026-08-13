@@ -42,6 +42,7 @@ ravin transcribe COURSE_ID
 ravin summarize COURSE_ID
 ravin questions
 ravin recording
+ravin export
 ravin serve --open
 ```
 
@@ -120,6 +121,32 @@ The scanner reports each applicable file, transcript, summary, and assessment as
 Empty LMS resource activities that expose no actual file are not counted as downloads. Older files saved with broken UTF-8 header names are recognized in place without renaming or altering their contents. After `ravin download`, the command says how many LMS entries it checked and prints the same reconciled status and next actions instead of claiming every existing file was newly downloaded.
 
 The downloader updates the course manifest after every completed file. A final offline scan reconciles all totals, so an interrupted run still retains useful progress.
+
+## Course exports
+
+Create a timestamped ZIP from every local course:
+
+```bash
+ravin export
+```
+
+By default, the archive is written to a path such as `public/exports/2026-08-13_14-35-22.zip`. Each run therefore produces a versioned file that can be downloaded directly from `/exports/2026-08-13_14-35-22.zip` when `public/` is your web server's document root. Generated exports are ignored by Git.
+
+Videos are excluded by default, including archived video versions. The ZIP still contains the course catalog and manifests, documents, compressed attachments, audio, transcripts, summaries, exam questions and attachments, recording metadata, and other non-video course files. Partial downloads and transient lock files are omitted.
+
+Include current and archived videos when you need a complete backup:
+
+```bash
+ravin export --include-videos
+```
+
+Choose a different destination with `--output`:
+
+```bash
+ravin export --output ~/Backups/ravin-courses.zip
+```
+
+The archive always contains a top-level `courses/` directory, so it can be extracted into a compatible `public/` web root. Exports are built beside the destination and installed atomically; an interrupted run does not leave a broken ZIP. The destination must be outside `public/courses/`; use `--output` when you do not want an export exposed by the library server.
 
 ## Exam questions and answers
 
@@ -342,6 +369,7 @@ ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language L
 ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
 ravin questions [COURSE_ID] [ACTIVITY_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
 ravin recording [COURSE_ID] [ACTIVITY_ID] [VIDEO]
+ravin export [--output ARCHIVE.zip] [--include-videos] [--public PATH]
 ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 
@@ -364,6 +392,7 @@ src/ravin/
 ├── summarize.py    # resilient Codex CLI study-guide batches
 ├── questions.py    # local exam-question and attachment imports
 ├── recordings.py   # local live-class recording imports
+├── exporter.py     # atomic course ZIP exports
 ├── local_files.py  # atomic local copies and archived versions
 ├── wizard.py       # shared interactive import helpers
 ├── migration.py    # previous-layout migration

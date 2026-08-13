@@ -119,6 +119,14 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(recordings_wizard.course_id)
         self.assertIsNone(recordings_wizard.activity_id)
         self.assertIsNone(recordings_wizard.video)
+        export = build_parser().parse_args(
+            ["export", "--output", "backup.zip", "--include-videos", "--public", "site"]
+        )
+        self.assertEqual(export.output, Path("backup.zip"))
+        self.assertTrue(export.include_videos)
+        self.assertEqual(export.public, Path("site"))
+        default_export = build_parser().parse_args(["export"])
+        self.assertIsNone(default_export.output)
         serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 

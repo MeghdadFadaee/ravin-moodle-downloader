@@ -15,7 +15,9 @@ dist/
 downloads/
 library/
 public/courses/
+public/exports/
 public/nginx.local.conf
+/courses.zip
 eggs/
 .eggs/
 lib/

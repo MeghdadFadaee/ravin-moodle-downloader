@@ -17,6 +17,7 @@ from .auth import (
 )
 from .client import MoodleClient
 from .constants import DEFAULT_ENV_FILE, DEFAULT_RAVIN_LOGIN_URL, DEFAULT_SITE, ENV_KEYS, __version__
+from .exporter import export_courses, format_export_result
 from .migration import migrate_library_to_public
 from .models import MoodleError
 from .questions import format_questions_result, import_questions, questions_wizard
@@ -168,6 +169,24 @@ def build_parser() -> argparse.ArgumentParser:
     recording_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     recording_parser.add_argument("--json", action="store_true", help="print imported paths as JSON")
 
+    export_parser = subparsers.add_parser(
+        "export",
+        help="create a ZIP archive of all local course data",
+        description="Export public/courses as a portable ZIP; videos are excluded unless explicitly included.",
+    )
+    export_parser.add_argument(
+        "--output",
+        type=Path,
+        help="destination ZIP path (default: PUBLIC/exports/YYYY-MM-DD_HH-MM-SS.zip)",
+    )
+    export_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    export_parser.add_argument(
+        "--include-videos",
+        action="store_true",
+        help="include current and archived video files (can make the ZIP very large)",
+    )
+    export_parser.add_argument("--json", action="store_true", help="print export details as JSON")
+
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address")
@@ -215,8 +234,23 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         public = getattr(args, "public", Path("public")).expanduser().resolve()
-        if args.command in {"scan", "download", "transcribe", "summarize", "questions", "recording", "recordings"}:
+        if args.command in {
+            "scan", "download", "transcribe", "summarize", "questions", "recording", "recordings", "export",
+        }:
             _maybe_migrate(public)
+
+        if args.command == "export":
+            result = export_courses(
+                public,
+                args.output,
+                include_videos=args.include_videos,
+                progress=None if args.json else lambda message: print(message, file=sys.stderr),
+            )
+            print(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+                if args.json else format_export_result(result)
+            )
+            return 0
 
         if args.command == "scan" and args.offline:
             catalog = scan_offline(public, args.course_ids)

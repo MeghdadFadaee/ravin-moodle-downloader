@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ravin-moodle-downloader"
-version = "0.12.0"
+version = "0.13.0"
 description = "Scan, download, transcribe, summarize, and organize authorized Moodle course materials"
 readme = "README.md"
 requires-python = ">=3.10"
