@@ -4,7 +4,9 @@ import http.client
 import http.cookiejar
 import json
 import mimetypes
+import os
 import re
+import shutil
 import sys
 import time
 import urllib.error
@@ -23,6 +25,23 @@ from .paths import (
     _is_cloudflare_challenge,
     _unique,
 )
+
+
+def _archive_existing_download(path: Path) -> Path:
+    """Preserve a file before replacing its current path."""
+    archive_directory = path.parent / "archive"
+    archive_directory.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    candidate = archive_directory / f"{timestamp}--{path.name}"
+    counter = 2
+    while candidate.exists():
+        candidate = archive_directory / f"{timestamp}--{counter}--{path.name}"
+        counter += 1
+    try:
+        os.link(path, candidate)
+    except OSError:
+        shutil.copy2(path, candidate)
+    return candidate
 
 
 class MoodleClient:
@@ -460,7 +479,8 @@ class MoodleClient:
         suggested_filename = _clean_name(item.filename, activity)
         destination = directory / suggested_filename
         if destination.exists() and not overwrite:
-            return destination
+            if item.filesize is None or destination.stat().st_size == item.filesize:
+                return destination
         temporary = destination.with_name(destination.name + ".part")
         if overwrite:
             temporary.unlink(missing_ok=True)
@@ -480,7 +500,8 @@ class MoodleClient:
                     if not temporary.exists() and response_filename != suggested_filename:
                         destination = directory / response_filename
                         if destination.exists() and not overwrite:
-                            return destination
+                            if expected_total is None or destination.stat().st_size == expected_total:
+                                return destination
                         temporary = destination.with_name(destination.name + ".part")
                         resume_at = temporary.stat().st_size if temporary.exists() else 0
 
@@ -538,6 +559,9 @@ class MoodleClient:
                         raise MoodleError(
                             f"connection closed early at {downloaded} of {expected_total} bytes"
                         )
+                if destination.exists():
+                    archived = _archive_existing_download(destination)
+                    print(f"  archived previous version as {archived.name}", file=sys.stderr)
                 temporary.replace(destination)
                 if sys.stderr.isatty():
                     elapsed = max(time.monotonic() - started, 0.01)

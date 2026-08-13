@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mimetypes
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,7 @@ from .client import MoodleClient
 from .models import FileItem, MoodleError
 from .paths import (
     _activity_directory_name,
+    _clean_name,
     _course_content_root,
     _discover_artifacts,
     _read_json_object,
@@ -90,7 +92,12 @@ def _summary_metadata(summary: Path, transcript: Path) -> dict[str, Any]:
     }
 
 
-def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> str:
+def _artifact_state(
+    activity_directory: Path,
+    kind: str,
+    applicable: bool,
+    current_source: Path | None = None,
+) -> str:
     artifacts = activity_directory / "artifacts"
     if kind == "transcript":
         transcript = artifacts / "transcript.fa.txt"
@@ -117,6 +124,8 @@ def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> st
                 if path.is_file() and not path.name.endswith(".part")
             )
         if not metadata or not source_files:
+            return "error" if failed else "stale"
+        if current_source is not None and source_files[0].resolve() != current_source.resolve():
             return "error" if failed else "stale"
         source_stat = source_files[0].stat()
         expected_size = metadata.get("source_size")
@@ -160,7 +169,7 @@ def _artifact_state(activity_directory: Path, kind: str, applicable: bool) -> st
 def _download_state(activity_directory: Path, item: dict[str, Any]) -> tuple[str, Path | None]:
     filename = str(item.get("filename") or "")
     files_directory = activity_directory / "files"
-    final = files_directory / filename if filename else None
+    final = files_directory / _clean_name(filename, "file") if filename else None
     if final and final.is_file():
         expected_size = item.get("remote_size")
         if expected_size is not None and int(expected_size) != final.stat().st_size:
@@ -172,6 +181,50 @@ def _download_state(activity_directory: Path, item: dict[str, Any]) -> tuple[str
     if filename or item.get("activity_type") in {"resource", "folder", "page", "book"}:
         return "missing", None
     return "not_applicable", None
+
+
+def _file_versions(
+    public: Path,
+    activity_directory: Path,
+    current: Path | None,
+) -> list[dict[str, Any]]:
+    """Describe the current resource and every preserved older version."""
+    files_directory = activity_directory / "files"
+    if not files_directory.is_dir():
+        return []
+    candidates = [
+        path
+        for path in files_directory.rglob("*")
+        if path.is_file()
+        and not path.name.endswith(".part")
+        and not any(part.startswith(".") for part in path.relative_to(files_directory).parts)
+    ]
+    current_resolved = current.resolve() if current and current.is_file() else None
+    records: list[dict[str, Any]] = []
+    for path in candidates:
+        stat = path.stat()
+        is_current = current_resolved is not None and path.resolve() == current_resolved
+        mimetype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        records.append(
+            {
+                "filename": path.name,
+                "path": path.relative_to(activity_directory).as_posix(),
+                "url": _relative_browser_path(path, public),
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+                "mimetype": mimetype,
+                "state": "current" if is_current else "archived",
+            }
+        )
+    return sorted(
+        records,
+        key=lambda record: (
+            record["state"] != "current",
+            -int(record["mtime_ns"]),
+            str(record["path"]).casefold(),
+        ),
+    )
 
 
 def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
@@ -195,8 +248,22 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
             download_state, local_path = _download_state(activity_directory, item)
             media_applicable = item.get("kind") in {"video", "audio"}
             assessment_applicable = item.get("kind") == "assessment" or item.get("activity_type") == "quiz"
-            transcript_state = _artifact_state(activity_directory, "transcript", media_applicable)
+            transcript_state = _artifact_state(
+                activity_directory,
+                "transcript",
+                media_applicable,
+                current_source=local_path,
+            )
+            if media_applicable and download_state != "complete" and transcript_state == "complete":
+                transcript_state = "stale"
             summary_state = _artifact_state(activity_directory, "summary", media_applicable)
+            if (
+                media_applicable
+                and download_state == "complete"
+                and transcript_state != "complete"
+                and summary_state == "complete"
+            ):
+                summary_state = "stale"
             questions_state = _artifact_state(activity_directory, "questions", assessment_applicable)
             for value in (download_state, transcript_state, summary_state, questions_state):
                 if value not in STATE_VALUES:
@@ -216,6 +283,10 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 else download_state
             )
             item["artifacts"] = _discover_artifacts(activity_directory, public)
+            if item.get("activity_type") == "resource" and item.get("filename"):
+                item["file_versions"] = _file_versions(public, activity_directory, local_path)
+            else:
+                item.pop("file_versions", None)
             if local_path:
                 item["local_bytes"] = local_path.stat().st_size
                 item["local_url"] = _relative_browser_path(local_path, public)

@@ -192,6 +192,27 @@ class TranscriptionTests(unittest.TestCase):
         self.assertEqual(result.total, 1)
         self.assertFalse(transcriber.runtime_root.exists())
 
+    def test_discovery_normalizes_current_filename_when_archived_media_exists(self) -> None:
+        self.write_course(["Network + 12 Exp.mp4"])
+        manifest_path = self.public / "courses" / "44" / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["course"]["sections"][0]["items"][0]["filename"] = "Network  + 12 Exp.mp4"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        files = self.public / "courses" / "44" / "content" / "002--001--4901" / "files"
+        (files / "12.mp4").write_bytes(b"archived video")
+
+        transcriber = CourseTranscriber(
+            self.options(dry_run=True),
+            model_loader=lambda _name, _device: (_ for _ in ()).throw(
+                AssertionError("dry-run must not load Whisper")
+            ),
+            media_validator=lambda _source: None,
+        )
+        result = transcriber.run()
+
+        self.assertEqual(result.total, 1)
+        self.assertEqual(result.unavailable, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

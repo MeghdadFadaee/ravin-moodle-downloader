@@ -338,11 +338,19 @@ main {
 .resource-index { color: var(--muted); font-size: .75rem; font-variant-numeric: tabular-nums; }
 .resource-main { min-width: 0; }
 .resource-title { display: block; overflow: hidden; font-weight: 730; text-overflow: ellipsis; white-space: nowrap; }
-.resource-file { display: block; overflow: hidden; margin-top: 4px; color: var(--muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.resource-file-line { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 4px; }
+.resource-file { display: block; overflow: hidden; color: var(--muted); font-size: .78rem; text-overflow: ellipsis; white-space: nowrap; }
+.current-version-badge { padding: 3px 6px; border-radius: 6px; color: var(--accent-strong); background: color-mix(in srgb, var(--accent) 22%, var(--surface)); font-size: .6rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
 .resource-description { display: -webkit-box; overflow: hidden; margin-top: 5px; color: var(--muted); font-size: .76rem; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .artifact-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .artifact-button { padding: 5px 9px; border: 1px solid color-mix(in srgb, var(--blue) 24%, var(--line)); border-radius: 8px; color: var(--blue); background: var(--blue-soft); cursor: pointer; font-size: .7rem; font-weight: 750; }
 .artifact-button:hover { border-color: var(--blue); }
+.version-history { max-width: 680px; margin-top: 9px; color: var(--muted); font-size: .72rem; }
+.version-history summary { width: max-content; cursor: pointer; color: color-mix(in srgb, var(--ink) 62%, #c48600); font-weight: 750; }
+.version-list { display: grid; gap: 6px; margin-top: 7px; }
+.version-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px; border: 1px solid color-mix(in srgb, #c48600 32%, var(--line)); border-radius: 9px; background: color-mix(in srgb, #c48600 9%, var(--surface)); }
+.version-info { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.version-action { flex: 0 0 auto; padding: 4px 7px; border: 0; border-radius: 6px; color: color-mix(in srgb, var(--ink) 70%, #a76c00); background: color-mix(in srgb, #c48600 18%, var(--surface-strong)); cursor: pointer; font: inherit; font-weight: 750; text-decoration: none; }
 .state-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
 .state-chip { padding: 4px 7px; border-radius: 7px; color: var(--muted); background: var(--surface-strong); font-size: .65rem; font-weight: 700; text-transform: capitalize; }
 .state-chip.complete { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 78%, transparent); }

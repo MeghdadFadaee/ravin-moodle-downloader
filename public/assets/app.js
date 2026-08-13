@@ -246,7 +246,8 @@ function isComplete(item) {
 }
 
 function resourceMatches(item) {
-  const haystack = normalized(`${item.title} ${item.filename} ${item.section}`);
+  const versionNames = (item.file_versions || []).map((version) => version.filename).join(" ");
+  const haystack = normalized(`${item.title} ${item.filename} ${versionNames} ${item.section}`);
   if (state.query && !haystack.includes(state.query)) return false;
   if (state.filter === "all") return true;
   if (state.filter === "downloaded" || state.filter === "missing") return item.status === state.filter;
@@ -266,11 +267,20 @@ function resourceRow(item, index) {
   title.className = "resource-title";
   title.dir = "auto";
   title.textContent = item.title;
+  const fileLine = document.createElement("div");
+  fileLine.className = "resource-file-line";
   const filename = document.createElement("span");
   filename.className = "resource-file";
   filename.dir = "auto";
   filename.textContent = item.filename || item.badge || item.activity_type;
-  main.append(title, filename);
+  fileLine.append(filename);
+  if ((item.file_versions || []).some((version) => version.state === "current")) {
+    const currentBadge = document.createElement("span");
+    currentBadge.className = "current-version-badge";
+    currentBadge.textContent = "Current";
+    fileLine.append(currentBadge);
+  }
+  main.append(title, fileLine);
   if (item.description) {
     const description = document.createElement("span");
     description.className = "resource-description";
@@ -296,6 +306,43 @@ function resourceRow(item, index) {
       artifactActions.append(button);
     });
     main.append(artifactActions);
+  }
+  const archivedVersions = (item.file_versions || []).filter((version) => version.state === "archived");
+  if (archivedVersions.length) {
+    const history = document.createElement("details");
+    history.className = "version-history";
+    const historyTitle = document.createElement("summary");
+    historyTitle.textContent = `${archivedVersions.length} archived version${archivedVersions.length === 1 ? "" : "s"}`;
+    history.append(historyTitle);
+    const versionList = document.createElement("div");
+    versionList.className = "version-list";
+    archivedVersions.forEach((version) => {
+      const versionRow = document.createElement("div");
+      versionRow.className = "version-row";
+      const versionInfo = document.createElement("span");
+      versionInfo.className = "version-info";
+      versionInfo.dir = "auto";
+      const modified = version.modified_at ? new Date(version.modified_at).toLocaleDateString() : "";
+      versionInfo.textContent = `${version.filename} · ${formatBytes(version.size)}${modified ? ` · ${modified}` : ""}`;
+      let versionAction;
+      if (String(version.mimetype || "").startsWith("video/")) {
+        versionAction = document.createElement("button");
+        versionAction.type = "button";
+        versionAction.textContent = "Play archived";
+        versionAction.addEventListener("click", () => openVideo(item, version));
+      } else {
+        versionAction = document.createElement("a");
+        versionAction.href = version.url;
+        versionAction.target = "_blank";
+        versionAction.rel = "noopener";
+        versionAction.textContent = "Open archived";
+      }
+      versionAction.className = "version-action";
+      versionRow.append(versionInfo, versionAction);
+      versionList.append(versionRow);
+    });
+    history.append(versionList);
+    main.append(history);
   }
   const stateLabels = { download: "File", transcript: "Transcript", summary: "Summary", questions: "Questions" };
   const visibleStates = Object.entries(item.state || {}).filter(([, value]) => value !== "not_applicable");
@@ -402,11 +449,11 @@ function renderResources() {
   byId("emptyResources").hidden = visibleCount !== 0;
 }
 
-function openVideo(item) {
+function openVideo(item, version = null) {
   const dialog = byId("mediaDialog");
   const player = byId("mediaPlayer");
-  setText("mediaTitle", item.title);
-  player.src = item.local_url;
+  setText("mediaTitle", version ? `${item.title} — ${version.filename} (Archived)` : item.title);
+  player.src = version?.url || item.local_url;
   dialog.showModal();
   player.play().catch(() => {});
 }

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .models import MoodleError
-from .paths import _read_json_object
+from .paths import _clean_name, _read_json_object
 from .scan import scan_offline
 
 
@@ -279,7 +279,7 @@ class CourseTranscriber:
                         continue
                     key = str(item.get("key") or item.get("bundle_path", "").removeprefix("content/"))
                     activity = courses_root / str(course_id) / "content" / key
-                    expected = activity / "files" / str(item.get("filename") or "")
+                    expected = activity / "files" / _clean_name(str(item.get("filename") or ""), "file")
                     candidates = sorted(
                         path for path in (activity / "files").glob("*")
                         if path.is_file() and not path.name.endswith(".part")

@@ -415,6 +415,107 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(item["state"]["download"], "complete")
             self.assertEqual(catalog["stats"]["downloaded_files"], 1)
 
+    def test_offline_scan_uses_the_downloaders_normalized_filename(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "public"
+            activity = output / "courses" / "44" / "content" / "013--001--4951"
+            downloaded = activity / "files" / "Network + 12 Exp.mp4"
+            downloaded.parent.mkdir(parents=True)
+            downloaded.write_bytes(b"replacement video")
+            old_file = activity / "files" / "12.mp4"
+            old_file.write_bytes(b"old video preserved")
+            transcript = activity / "artifacts" / "transcript.fa.txt"
+            transcript.parent.mkdir(parents=True)
+            transcript.write_text("old transcript", encoding="utf-8")
+            old_stat = old_file.stat()
+            (activity / "artifacts" / "transcript.meta.json").write_text(
+                json.dumps(
+                    {
+                        "source": "../files/12.mp4",
+                        "source_size": old_stat.st_size,
+                        "source_mtime_ns": old_stat.st_mtime_ns,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manifest_path = output / "courses" / "44" / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "course": {
+                            "id": 44,
+                            "fullname": "Network +",
+                            "sections": [{
+                                "number": 13,
+                                "items": [{
+                                    "filename": "Network  + 12 Exp.mp4",
+                                    "activity_type": "resource",
+                                    "kind": "video",
+                                    "title": "Internet Protocol Addressing (IP)",
+                                    "section_number": 13,
+                                    "activity_position": 1,
+                                    "activity_id": 4951,
+                                }],
+                            }],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            scan_offline(output, [44])
+
+            refreshed = json.loads(manifest_path.read_text(encoding="utf-8"))
+            item = refreshed["course"]["sections"][0]["items"][0]
+            self.assertEqual(item["state"]["download"], "complete")
+            self.assertEqual(
+                item["local_url"],
+                "courses/44/content/013--001--4951/files/Network%20%2B%2012%20Exp.mp4",
+            )
+            self.assertEqual(item["state"]["transcript"], "stale")
+            self.assertEqual(
+                [(version["filename"], version["state"]) for version in item["file_versions"]],
+                [("Network + 12 Exp.mp4", "current"), ("12.mp4", "archived")],
+            )
+            self.assertEqual(downloaded.read_bytes(), b"replacement video")
+            self.assertEqual(old_file.read_bytes(), b"old video preserved")
+
+    def test_changed_same_name_download_archives_previous_file(self):
+        response = _FakeResponse([b"new version"])
+        client = _FakeDownloadClient([response])
+        item = FileItem(
+            44,
+            "Course files",
+            "Lesson",
+            "file.bin",
+            "https://training.example/file.bin",
+            filesize=len(b"new version"),
+            section_number=2,
+            activity_id=4940,
+            activity_position=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "courses" / "44" / "content" / "002--001--4940" / "files" / "file.bin"
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(b"old")
+
+            downloaded = client.download(item, root, retries=0, retry_delay=0)
+
+            archived = list((destination.parent / "archive").glob("*--file.bin"))
+            self.assertEqual(downloaded.read_bytes(), b"new version")
+            self.assertEqual(len(archived), 1)
+            self.assertEqual(archived[0].read_bytes(), b"old")
+
+    def test_public_library_renders_current_and_archived_versions(self):
+        script = (Path(__file__).resolve().parents[1] / "public" / "assets" / "app.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("current-version-badge", script)
+        self.assertIn("archivedVersions", script)
+        self.assertIn("Play archived", script)
+
     def test_interrupted_download_retries_with_range(self):
         first = _FakeResponse(
             [

@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented here.
 
+## 0.10.0 - 2026-08-13
+
+- Track the Moodle-selected resource as current while retaining other local files as archived versions.
+- Preserve an existing same-name download under `files/archive/` before atomically installing its replacement.
+- Show current and archived files in the static library, including playback for archived videos.
+- Mark transcripts and summaries stale when they were generated from an archived media version.
+- Match scanner paths using the downloader's filename normalization so Moodle whitespace changes do not create false missing-file reports.
+- Apply the same filename normalization during transcription discovery when archived media is also present.
+
 ## 0.9.0 - 2026-08-13
 
 - Add an interactive `ravin questions` wizard for importing or updating Markdown exam questions.
