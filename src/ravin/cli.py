@@ -346,11 +346,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             update_download_state(public, item, path)
             downloaded.append(str(path))
-        scan_offline(public, [args.course_id])
+        catalog = scan_offline(public, [args.course_id])
         if args.json:
             print(json.dumps(downloaded, ensure_ascii=False, indent=2))
         else:
-            print(f"Downloaded {len(downloaded)} file(s) into {public / 'courses' / str(args.course_id)}")
+            print(f"Checked {len(downloaded)} LMS file entries in {public / 'courses' / str(args.course_id)}")
+            print()
+            print(format_scan(catalog))
         return 0
     except (MoodleError, KeyboardInterrupt) as exc:
         if isinstance(exc, KeyboardInterrupt):

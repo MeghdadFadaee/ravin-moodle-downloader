@@ -106,7 +106,30 @@ def _filename_from_headers(headers: Any, url: str, fallback: str) -> str:
         content_type = headers.get_content_type() if hasattr(headers, "get_content_type") else ""
         extension = mimetypes.guess_extension(content_type) or ""
         name = fallback + extension
+    name = _repair_utf8_header_name(name)
     return _clean_name(name, fallback)
+
+
+def _repair_utf8_header_name(value: str) -> str:
+    """Repair UTF-8 bytes that an HTTP header exposed as Latin-1 text."""
+    suspicious = any("\x80" <= character <= "\x9f" for character in value)
+    suspicious = suspicious or any(marker in value for marker in ("Ã", "Â", "Ø", "Ù", "Û", "Ú", "Ð", "Ñ"))
+    if not suspicious:
+        return value
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+
+def _legacy_mojibake_name(value: str, fallback: str = "file") -> str | None:
+    """Return the exact filename produced by older broken header decoding."""
+    try:
+        mojibake = value.encode("utf-8").decode("latin-1")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return None
+    cleaned = _clean_name(mojibake, fallback)
+    return cleaned if cleaned != value else None
 
 
 def _unique(items: Iterable[FileItem]) -> list[FileItem]:

@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## 0.12.0 - 2026-08-13
+
+- Add per-category missing, partial, stale, and error details to scan output.
+- Print ordered next-step commands for downloading, transcribing, summarizing, and importing exam questions.
+- Report missing live-class recordings as optional follow-up work.
+- Exclude empty LMS resource activities from downloadable-file totals.
+- Recognize files written by the previous mojibake filename bug without renaming or modifying course content.
+- Repair future UTF-8 `Content-Disposition` filenames and avoid redownloading known legacy paths.
+- Replace the misleading download total with a checked-entry count followed by reconciled course status.
+
 ## 0.11.0 - 2026-08-13
 
 - Add a `ravin recording` wizard for attaching local videos to Moodle live-class activities.

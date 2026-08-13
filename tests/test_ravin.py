@@ -34,7 +34,7 @@ from ravin.paths import (
     _is_cloudflare_challenge,
     _unique,
 )
-from ravin.scan import scan_offline, scan_remote
+from ravin.scan import format_scan, scan_offline, scan_remote
 
 
 class _FakeResponse:
@@ -281,6 +281,12 @@ class ParserTests(unittest.TestCase):
         headers["Content-Disposition"] = "attachment; filename*=UTF-8''lesson%201.mp4"
         self.assertEqual(_filename_from_headers(headers, "https://x/file.php/1", "lesson"), "lesson 1.mp4")
 
+    def test_filename_repairs_utf8_exposed_as_latin1(self):
+        headers = email.message.Message()
+        expected = "برنامه زمانبندی.pdf"
+        headers["Content-Disposition"] = f'attachment; filename="{expected.encode("utf-8").decode("latin-1")}"'
+        self.assertEqual(_filename_from_headers(headers, "https://x/file.php/1", "lesson"), expected)
+
     def test_sanitizes_names_and_deduplicates_files(self):
         self.assertEqual(_clean_name('Week 1: Intro/Setup?'), "Week 1_ Intro_Setup_")
         self.assertEqual(_activity_directory_name(17, 2, 5201), "017--002--5201")
@@ -489,6 +495,91 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(downloaded.read_bytes(), b"replacement video")
             self.assertEqual(old_file.read_bytes(), b"old video preserved")
 
+    def test_offline_scan_recognizes_legacy_mojibake_and_ignores_empty_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "public"
+            activity = output / "courses" / "51" / "content" / "001--001--5685"
+            expected = "برنامه زمانبندی.pdf"
+            legacy = _clean_name(expected.encode("utf-8").decode("latin-1"), "file")
+            downloaded = activity / "files" / legacy
+            downloaded.parent.mkdir(parents=True)
+            downloaded.write_bytes(b"schedule")
+            manifest_path = output / "courses" / "51" / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "course": {
+                            "id": 51,
+                            "fullname": "LPIC",
+                            "sections": [{
+                                "number": 1,
+                                "items": [
+                                    {
+                                        "filename": expected,
+                                        "activity_type": "resource",
+                                        "kind": "document",
+                                        "title": "Schedule",
+                                        "section_number": 1,
+                                        "activity_position": 1,
+                                        "activity_id": 5685,
+                                    },
+                                    {
+                                        "filename": "",
+                                        "activity_type": "resource",
+                                        "kind": "resource",
+                                        "title": "Empty resource",
+                                        "section_number": 1,
+                                        "activity_position": 2,
+                                        "activity_id": 5686,
+                                    },
+                                ],
+                            }],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = scan_offline(output, [51])
+
+            refreshed = json.loads(manifest_path.read_text(encoding="utf-8"))
+            first, second = refreshed["course"]["sections"][0]["items"]
+            self.assertEqual(first["state"]["download"], "complete")
+            self.assertIsNotNone(first["local_url"])
+            self.assertEqual(second["state"]["download"], "not_applicable")
+            self.assertEqual(refreshed["course"]["states"]["downloads"], {"total": 1, "complete": 1})
+            self.assertIn("Downloads      1 / 1   complete", format_scan(catalog))
+
+    def test_scan_output_lists_state_details_and_ordered_next_commands(self):
+        catalog = {
+            "courses": [{
+                "id": 51,
+                "fullname": "LPIC",
+                "section_count": 2,
+                "activity_count": 10,
+                "states": {
+                    "downloads": {"total": 8, "complete": 7, "missing": 1},
+                    "transcripts": {"total": 6, "complete": 4, "missing": 1, "stale": 1},
+                    "summaries": {"total": 6, "complete": 0, "missing": 6},
+                    "assessments": {"total": 1, "complete": 0, "missing": 1},
+                    "recordings": {"total": 2, "complete": 1, "missing": 1},
+                    "partial": 0,
+                    "stale": 1,
+                    "errors": 0,
+                },
+            }]
+        }
+
+        output = format_scan(catalog)
+
+        self.assertIn("Downloads      7 / 8   complete · 1 missing", output)
+        self.assertIn("Transcripts    4 / 6   complete · 1 missing, 1 stale", output)
+        self.assertLess(output.index("ravin download 51"), output.index("ravin transcribe 51"))
+        self.assertLess(output.index("ravin transcribe 51"), output.index("ravin summarize 51"))
+        self.assertIn("ravin questions 51", output)
+        self.assertIn("ravin recording 51", output)
+
     def test_changed_same_name_download_archives_previous_file(self):
         response = _FakeResponse([b"new version"])
         client = _FakeDownloadClient([response])
@@ -515,6 +606,31 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(downloaded.read_bytes(), b"new version")
             self.assertEqual(len(archived), 1)
             self.assertEqual(archived[0].read_bytes(), b"old")
+
+    def test_download_reuses_legacy_mojibake_path_without_requesting_it_again(self):
+        expected = "برنامه زمانبندی.pdf"
+        legacy = _clean_name(expected.encode("utf-8").decode("latin-1"), "file")
+        client = _FakeDownloadClient([])
+        item = FileItem(
+            51,
+            "Course files",
+            "Schedule",
+            expected,
+            "https://training.example/file.pdf",
+            section_number=1,
+            activity_id=5685,
+            activity_position=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "courses" / "51" / "content" / "001--001--5685" / "files" / legacy
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes(b"schedule")
+
+            reused = client.download(item, root)
+
+            self.assertEqual(reused, destination)
+            self.assertEqual(client.request_headers, [])
 
     def test_public_library_renders_current_and_archived_versions(self):
         script = (Path(__file__).resolve().parents[1] / "public" / "assets" / "app.js").read_text(

@@ -115,7 +115,9 @@ artifacts/
 └── questions.fa.md
 ```
 
-The scanner reports each applicable file, transcript, summary, and assessment as `missing`, `partial`, `complete`, `stale`, or `error`. Non-applicable states are recorded as `not_applicable`. Transcript freshness is checked against its source file metadata; summary freshness is checked against the transcript hash.
+The scanner reports each applicable file, transcript, summary, and assessment as `missing`, `partial`, `complete`, `stale`, or `error`. Each course includes an ordered **Next** section with copyable commands for downloads, transcription, summaries, and exam questions; missing live-class recordings are shown separately as optional work. Non-applicable states are recorded as `not_applicable`. Transcript freshness is checked against its source file metadata; summary freshness is checked against the transcript hash.
+
+Empty LMS resource activities that expose no actual file are not counted as downloads. Older files saved with broken UTF-8 header names are recognized in place without renaming or altering their contents. After `ravin download`, the command says how many LMS entries it checked and prints the same reconciled status and next actions instead of claiming every existing file was newly downloaded.
 
 The downloader updates the course manifest after every completed file. A final offline scan reconciles all totals, so an interrupted run still retains useful progress.
 

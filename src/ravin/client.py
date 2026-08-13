@@ -22,6 +22,7 @@ from .paths import (
     _clean_name,
     _filename_from_headers,
     _is_cloudflare_challenge,
+    _legacy_mojibake_name,
     _unique,
 )
 
@@ -462,6 +463,11 @@ class MoodleClient:
         if destination.exists() and not overwrite:
             if item.filesize is None or destination.stat().st_size == item.filesize:
                 return destination
+        legacy_name = _legacy_mojibake_name(suggested_filename, activity)
+        legacy_destination = directory / legacy_name if legacy_name else None
+        if legacy_destination and legacy_destination.exists() and not overwrite:
+            if item.filesize is None or legacy_destination.stat().st_size == item.filesize:
+                return legacy_destination
         temporary = destination.with_name(destination.name + ".part")
         if overwrite:
             temporary.unlink(missing_ok=True)

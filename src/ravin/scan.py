@@ -19,6 +19,7 @@ from .paths import (
     _clean_name,
     _course_content_root,
     _discover_artifacts,
+    _legacy_mojibake_name,
     _read_json_object,
     _relative_browser_path,
 )
@@ -176,10 +177,17 @@ def _download_state(activity_directory: Path, item: dict[str, Any]) -> tuple[str
         if expected_size is not None and int(expected_size) != final.stat().st_size:
             return "error", final
         return "complete", final
+    legacy_name = _legacy_mojibake_name(filename, "file") if filename else None
+    legacy = files_directory / legacy_name if legacy_name else None
+    if legacy and legacy.is_file():
+        expected_size = item.get("remote_size")
+        if expected_size is not None and int(expected_size) != legacy.stat().st_size:
+            return "error", legacy
+        return "complete", legacy
     partial = final.with_name(final.name + ".part") if final else None
     if partial and partial.is_file():
         return "partial", partial
-    if filename or item.get("activity_type") in {"resource", "folder", "page", "book"}:
+    if filename:
         return "missing", None
     return "not_applicable", None
 
@@ -232,11 +240,17 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
     course_id = int(course.get("id") or 0)
     downloaded_bytes = 0
     type_counts: dict[str, int] = {}
+    category_states = ("complete", "missing", "partial", "stale", "error")
+
+    def category_counts() -> dict[str, int]:
+        return {"total": 0, **{state: 0 for state in category_states}}
+
     state_counts = {
-        "downloads": {"complete": 0, "total": 0},
-        "transcripts": {"complete": 0, "total": 0},
-        "summaries": {"complete": 0, "total": 0},
-        "assessments": {"complete": 0, "total": 0},
+        "downloads": category_counts(),
+        "transcripts": category_counts(),
+        "summaries": category_counts(),
+        "assessments": category_counts(),
+        "recordings": category_counts(),
         "partial": 0,
         "stale": 0,
         "errors": 0,
@@ -249,6 +263,7 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
             download_state, local_path = _download_state(activity_directory, item)
             media_applicable = item.get("kind") in {"video", "audio"}
             assessment_applicable = item.get("kind") == "assessment" or item.get("activity_type") == "quiz"
+            recording_applicable = item.get("activity_type") in LIVE_CLASS_MODULES
             transcript_state = _artifact_state(
                 activity_directory,
                 "transcript",
@@ -303,15 +318,19 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 item["local_url"] = None
             if download_state != "not_applicable":
                 state_counts["downloads"]["total"] += 1
-                state_counts["downloads"]["complete"] += int(download_state == "complete")
+                state_counts["downloads"][download_state] += 1
             if media_applicable:
                 state_counts["transcripts"]["total"] += 1
-                state_counts["transcripts"]["complete"] += int(transcript_state == "complete")
+                state_counts["transcripts"][transcript_state] += 1
                 state_counts["summaries"]["total"] += 1
-                state_counts["summaries"]["complete"] += int(summary_state == "complete")
+                state_counts["summaries"][summary_state] += 1
             if assessment_applicable:
                 state_counts["assessments"]["total"] += 1
-                state_counts["assessments"]["complete"] += int(questions_state == "complete")
+                state_counts["assessments"][questions_state] += 1
+            if recording_applicable:
+                recording_state = download_state if download_state != "not_applicable" else "missing"
+                state_counts["recordings"]["total"] += 1
+                state_counts["recordings"][recording_state] += 1
             state_counts["partial"] += int(download_state == "partial")
             state_counts["stale"] += sum(value == "stale" for value in (transcript_state, summary_state))
             state_counts["errors"] += sum(
@@ -327,7 +346,13 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
             "downloaded_count": state_counts["downloads"]["complete"],
             "downloaded_bytes": downloaded_bytes,
             "type_counts": type_counts,
-            "states": state_counts,
+            "states": {
+                key: (
+                    {state: value for state, value in counts.items() if state in {"total", "complete"} or value}
+                    if isinstance(counts, dict) else counts
+                )
+                for key, counts in state_counts.items()
+            },
         }
     )
     return course
@@ -447,6 +472,7 @@ def scan_output(catalog: dict[str, Any]) -> list[dict[str, Any]]:
             "transcripts": course.get("states", {}).get("transcripts", {}),
             "summaries": course.get("states", {}).get("summaries", {}),
             "assessments": course.get("states", {}).get("assessments", {}),
+            "recordings": course.get("states", {}).get("recordings", {}),
             "partial": course.get("states", {}).get("partial", 0),
             "stale": course.get("states", {}).get("stale", 0),
             "errors": course.get("states", {}).get("errors", 0),
@@ -458,24 +484,106 @@ def scan_output(catalog: dict[str, Any]) -> list[dict[str, Any]]:
 def format_scan(catalog: dict[str, Any]) -> str:
     blocks = []
     for course in scan_output(catalog):
-        def count(name: str) -> str:
+        def count(name: str, label: str = "complete") -> str:
             state = course[name]
-            return f"{int(state.get('complete') or 0):>3} / {int(state.get('total') or 0):<3} complete"
+            complete = int(state.get("complete") or 0)
+            total = int(state.get("total") or 0)
+            details = [
+                f"{int(state.get(value) or 0)} {value}"
+                for value in ("missing", "partial", "stale", "error")
+                if int(state.get(value) or 0)
+            ]
+            suffix = f" · {', '.join(details)}" if details else ""
+            return f"{complete:>3} / {total:<3} {label}{suffix}"
+
+        actions: list[tuple[str, str]] = []
+
+        def pending(name: str) -> int:
+            state = course[name]
+            return max(int(state.get("total") or 0) - int(state.get("complete") or 0), 0)
+
+        def quantity(value: int, singular: str, plural: str | None = None) -> str:
+            return f"{value} {singular if value == 1 else (plural or singular + 's')}"
+
+        course_id = int(course["id"] or 0)
+        if pending("downloads"):
+            actions.append(
+                (
+                    f"ravin download {course_id}",
+                    f"fetch or repair {quantity(pending('downloads'), 'course file')}",
+                )
+            )
+        if pending("transcripts"):
+            actions.append(
+                (
+                    f"ravin transcribe {course_id}",
+                    f"create or refresh {quantity(pending('transcripts'), 'transcript')}",
+                )
+            )
+        if pending("summaries"):
+            actions.append(
+                (
+                    f"ravin summarize {course_id}",
+                    f"create or refresh {quantity(pending('summaries'), 'summary', 'summaries')}",
+                )
+            )
+        if pending("assessments"):
+            actions.append(
+                (
+                    f"ravin questions {course_id}",
+                    f"add questions for {quantity(pending('assessments'), 'assessment')}",
+                )
+            )
+        optional_actions: list[tuple[str, str]] = []
+        if pending("recordings"):
+            optional_actions.append(
+                (
+                    f"ravin recording {course_id}",
+                    f"attach a video to {quantity(pending('recordings'), 'live class', 'live classes')}",
+                )
+            )
+
+        next_lines = [""]
+        if actions:
+            next_lines.append("Next:")
+            next_lines.extend(
+                f"  {index}. {command}  # {description}"
+                for index, (command, description) in enumerate(actions, start=1)
+            )
+        elif optional_actions:
+            next_lines.append("Next (optional):")
+        else:
+            next_lines.append("Next:")
+            next_lines.append("  Nothing — all available course work is complete.")
+        if optional_actions:
+            if actions:
+                next_lines.extend(("", "Optional:"))
+            next_lines.extend(
+                f"  {command}  # {description}"
+                for command, description in optional_actions
+            )
+
+        status_lines = [
+            f"Downloads    {count('downloads')}",
+            f"Transcripts  {count('transcripts')}",
+            f"Summaries    {count('summaries')}",
+            f"Assessments  {count('assessments')}",
+        ]
+        if int(course["recordings"].get("total") or 0):
+            status_lines.append(f"Recordings   {count('recordings', 'attached')} (optional)")
+        status_lines.append(
+            f"Issues       {course['partial']} partial · {course['stale']} stale · {course['errors']} errors"
+        )
 
         blocks.append(
             "\n".join(
-                (
+                [
                     f"Course {course['id']} — {course['title']}",
                     f"{course['activities']} activities across {course['sections']} sections",
                     "",
-                    f"Downloads    {count('downloads')}",
-                    f"Transcripts  {count('transcripts')}",
-                    f"Summaries    {count('summaries')}",
-                    f"Assessments  {count('assessments')}",
-                    f"Partial      {course['partial']}",
-                    f"Stale        {course['stale']}",
-                    f"Errors       {course['errors']}",
-                )
+                    *status_lines,
+                    *next_lines,
+                ]
             )
         )
     return "\n\n".join(blocks)
