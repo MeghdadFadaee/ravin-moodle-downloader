@@ -20,6 +20,7 @@ from .constants import DEFAULT_ENV_FILE, DEFAULT_RAVIN_LOGIN_URL, DEFAULT_SITE, 
 from .migration import migrate_library_to_public
 from .models import MoodleError
 from .questions import format_questions_result, import_questions, questions_wizard
+from .recordings import format_recording_result, import_recording, recording_wizard
 from .scan import format_scan, scan_offline, scan_output, scan_remote, update_download_state
 from .server import _serve_library
 from .summarize import SummaryOptions, format_summary_result, summarize_courses
@@ -155,6 +156,18 @@ def build_parser() -> argparse.ArgumentParser:
     questions_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     questions_parser.add_argument("--json", action="store_true", help="print imported paths as JSON")
 
+    recording_parser = subparsers.add_parser(
+        "recording",
+        aliases=["recordings"],
+        help="interactively add a local recording to a live class",
+        description="Add a video recording with a course-and-live-class wizard; all values are optional.",
+    )
+    recording_parser.add_argument("course_id", nargs="?", type=int, help="course containing the live class")
+    recording_parser.add_argument("activity_id", nargs="?", type=int, help="Moodle live-class activity ID")
+    recording_parser.add_argument("video", nargs="?", type=Path, help="local video recording")
+    recording_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    recording_parser.add_argument("--json", action="store_true", help="print imported paths as JSON")
+
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     serve_parser.add_argument("--host", default="127.0.0.1", help="local bind address")
@@ -202,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         public = getattr(args, "public", Path("public")).expanduser().resolve()
-        if args.command in {"scan", "download", "transcribe", "summarize", "questions"}:
+        if args.command in {"scan", "download", "transcribe", "summarize", "questions", "recording", "recordings"}:
             _maybe_migrate(public)
 
         if args.command == "scan" and args.offline:
@@ -286,6 +299,20 @@ def main(argv: list[str] | None = None) -> int:
             print(
                 json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
                 if args.json else format_questions_result(result)
+            )
+            return 0
+
+        if args.command in {"recording", "recordings"}:
+            course_id, activity_id, recording_path = recording_wizard(
+                public,
+                args.course_id,
+                args.activity_id,
+                args.video,
+            )
+            result = import_recording(public, course_id, activity_id, recording_path)
+            print(
+                json.dumps(result.to_dict(), ensure_ascii=False, indent=2)
+                if args.json else format_recording_result(result)
             )
             return 0
 

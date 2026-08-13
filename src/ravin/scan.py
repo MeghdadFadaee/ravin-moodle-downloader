@@ -12,6 +12,7 @@ from typing import Any, Iterable, Iterator
 
 from .catalog import _build_library_catalog
 from .client import MoodleClient
+from .constants import LIVE_CLASS_MODULES
 from .models import FileItem, MoodleError
 from .paths import (
     _activity_directory_name,
@@ -283,7 +284,11 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 else download_state
             )
             item["artifacts"] = _discover_artifacts(activity_directory, public)
-            if item.get("activity_type") == "resource" and item.get("filename"):
+            versioned_activity = (
+                item.get("activity_type") == "resource"
+                or item.get("activity_type") in LIVE_CLASS_MODULES
+            )
+            if versioned_activity and item.get("filename"):
                 item["file_versions"] = _file_versions(public, activity_directory, local_path)
             else:
                 item.pop("file_versions", None)

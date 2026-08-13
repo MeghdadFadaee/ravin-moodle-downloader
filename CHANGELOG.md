@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## 0.11.0 - 2026-08-13
+
+- Add a `ravin recording` wizard for attaching local videos to Moodle live-class activities.
+- Make imported recordings available to the existing Whisper transcription and Codex summarization pipelines.
+- Preserve replaced recordings as archived versions and expose current and archived files in the library.
+- Keep the selected current recording across later online LMS scans with portable local metadata.
+- Accept pasted interactive file paths containing spaces without requiring shell quoting.
+
 ## 0.10.0 - 2026-08-13
 
 - Track the Moodle-selected resource as current while retaining other local files as archived versions.

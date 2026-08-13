@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .client import MoodleClient
+from .constants import LIVE_CLASS_MODULES
 from .models import FileItem, MoodleError
 from .paths import (
     _activity_directory_name, _activity_root, _clean_name, _course_content_root,
-    _discover_artifacts, _relative_browser_path,
+    _discover_artifacts, _read_json_object, _relative_browser_path,
 )
 
 
@@ -29,9 +30,9 @@ def _format_size(size: int | None) -> str:
     return str(size)
 
 
-def _resource_kind(item: FileItem) -> str:
-    mimetype = item.mimetype.casefold()
-    suffix = Path(item.filename).suffix.casefold()
+def _media_kind(filename: str, mimetype: str = "") -> str:
+    mimetype = mimetype.casefold()
+    suffix = Path(filename).suffix.casefold()
     if mimetype.startswith("video/") or suffix in {".mp4", ".mkv", ".webm", ".mov", ".m4v"}:
         return "video"
     if mimetype.startswith("audio/") or suffix in {".mp3", ".m4a", ".wav", ".ogg", ".flac"}:
@@ -45,6 +46,10 @@ def _resource_kind(item: FileItem) -> str:
     if suffix in {".zip", ".rar", ".7z", ".tar", ".gz"}:
         return "archive"
     return "file"
+
+
+def _resource_kind(item: FileItem) -> str:
+    return _media_kind(item.filename, item.mimetype)
 
 
 def _local_resource(item: FileItem, library: Path) -> tuple[str, Path | None]:
@@ -84,7 +89,18 @@ def _local_activity_record(
     ] if files_directory.is_dir() else []
     if not files and not (directory / "artifacts").is_dir():
         return None
-    return {"files": files}, directory
+    metadata = _read_json_object(directory / "artifacts" / "recording.meta.json")
+    current: str | None = None
+    source = metadata.get("source")
+    if isinstance(source, str):
+        candidate = (directory / "artifacts" / source).resolve()
+        try:
+            candidate.relative_to(directory.resolve())
+        except ValueError:
+            candidate = Path()
+        if candidate.is_file():
+            current = candidate.relative_to(directory.resolve()).as_posix()
+    return {"files": files, "current": current}, directory
 
 
 def _build_library_catalog(
@@ -205,9 +221,16 @@ def _build_library_catalog(
                     for relative in local_metadata.get("files", [])
                     if local_directory and (local_directory / str(relative)).is_file()
                 ]
-                local_path = local_files[0] if local_files else None
+                current_relative = local_metadata.get("current")
+                current_path = local_directory / str(current_relative) if local_directory and current_relative else None
+                local_path = current_path if current_path and current_path.is_file() else (local_files[0] if local_files else None)
                 local_bytes = local_path.stat().st_size if local_path else 0
-                local_kind = "assessment" if activity_type == "quiz" and local_activity else type_names.get(activity_type, "activity")
+                if activity_type == "quiz" and local_activity:
+                    local_kind = "assessment"
+                elif activity_type in LIVE_CLASS_MODULES and local_path:
+                    local_kind = _media_kind(local_path.name, mimetypes.guess_type(local_path.name)[0] or "")
+                else:
+                    local_kind = type_names.get(activity_type, "activity")
                 if local_path:
                     downloaded_count += 1
                     downloaded_bytes += local_bytes

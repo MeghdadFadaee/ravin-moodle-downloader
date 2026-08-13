@@ -4,9 +4,7 @@ import http.client
 import http.cookiejar
 import json
 import mimetypes
-import os
 import re
-import shutil
 import sys
 import time
 import urllib.error
@@ -16,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import DOWNLOADABLE_MODULES, USER_AGENT
+from .local_files import archive_existing_file
 from .models import Course, FileItem, MoodleError
 from .parsers import _CourseStructureParser, _FormParser, _LinkParser, _parse_moodle_config
 from .paths import (
@@ -25,24 +24,6 @@ from .paths import (
     _is_cloudflare_challenge,
     _unique,
 )
-
-
-def _archive_existing_download(path: Path) -> Path:
-    """Preserve a file before replacing its current path."""
-    archive_directory = path.parent / "archive"
-    archive_directory.mkdir(parents=True, exist_ok=True)
-    timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    candidate = archive_directory / f"{timestamp}--{path.name}"
-    counter = 2
-    while candidate.exists():
-        candidate = archive_directory / f"{timestamp}--{counter}--{path.name}"
-        counter += 1
-    try:
-        os.link(path, candidate)
-    except OSError:
-        shutil.copy2(path, candidate)
-    return candidate
-
 
 class MoodleClient:
     def __init__(
@@ -560,7 +541,7 @@ class MoodleClient:
                             f"connection closed early at {downloaded} of {expected_total} bytes"
                         )
                 if destination.exists():
-                    archived = _archive_existing_download(destination)
+                    archived = archive_existing_file(destination)
                     print(f"  archived previous version as {archived.name}", file=sys.stderr)
                 temporary.replace(destination)
                 if sys.stderr.isatty():

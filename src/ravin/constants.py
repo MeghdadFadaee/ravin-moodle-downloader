@@ -5,9 +5,10 @@ from pathlib import Path
 
 DEFAULT_SITE = "https://training.ravinacademy.com"
 DEFAULT_RAVIN_LOGIN_URL = "https://lms.ravinacademy.com/"
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 USER_AGENT = f"RavinMoodleDownloader/{__version__} (+personal Moodle client)"
 DOWNLOADABLE_MODULES = {"resource", "folder", "page", "book"}
+LIVE_CLASS_MODULES = {"bigbluebuttonbn", "zoom", "teamsmeeting", "webexactivity"}
 DEFAULT_ENV_FILE = Path.cwd() / ".env"
 ENV_KEYS = {
     "username": "RAVIN_USERNAME",

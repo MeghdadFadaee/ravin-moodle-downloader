@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import mimetypes
-import os
-import shlex
-import shutil
 import sys
-import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, TextIO
 
+from .local_files import atomic_copy
 from .models import MoodleError
 from .paths import _activity_directory_name, _clean_name, _read_json_object
 from .scan import _atomic_json, _manifest_lock, scan_offline
+from .wizard import prompt, prompt_path, select_number
 
 
 @dataclass(frozen=True)
@@ -30,23 +28,6 @@ class QuestionsImportResult:
         value = asdict(self)
         value["files"] = list(self.files)
         return value
-
-
-def _prompt(input_func: Callable[[str], str], message: str) -> str:
-    try:
-        return input_func(message).strip()
-    except EOFError as exc:
-        raise MoodleError("interactive input ended before the questions import was complete") from exc
-
-
-def _prompt_path_value(value: str) -> Path:
-    try:
-        parts = shlex.split(value)
-    except ValueError as exc:
-        raise MoodleError(f"invalid file path: {exc}") from exc
-    if len(parts) != 1:
-        raise MoodleError("enter exactly one file path")
-    return Path(parts[0]).expanduser()
 
 
 def _course_choices(public: Path) -> list[tuple[int, str, dict[str, Any]]]:
@@ -85,27 +66,6 @@ def _quiz_choices(course: dict[str, Any]) -> list[tuple[int, str, str, str]]:
     return choices
 
 
-def _select_number(
-    choices: list[tuple[Any, ...]],
-    prompt_message: str,
-    input_func: Callable[[str], str],
-    output: TextIO,
-) -> int:
-    valid_ids = {int(choice[0]) for choice in choices}
-    while True:
-        value = _prompt(input_func, prompt_message)
-        try:
-            selected = int(value)
-        except ValueError:
-            print("Please enter a list number or ID.", file=output)
-            continue
-        if 1 <= selected <= len(choices):
-            return int(choices[selected - 1][0])
-        if selected in valid_ids:
-            return selected
-        print("That selection is not in the list. Please try again.", file=output)
-
-
 def questions_wizard(
     public: Path,
     course_id: int | None = None,
@@ -130,7 +90,7 @@ def questions_wizard(
         for index, (candidate_id, title, course) in enumerate(courses, start=1):
             quiz_count = len(_quiz_choices(course))
             print(f"  [{index}] {title} (course {candidate_id}, {quiz_count} exam(s))", file=output)
-        course_id = _select_number(courses, "Select a course: ", input_func, output)
+        course_id = select_number(courses, "Select a course: ", input_func, output)
     if course_id not in courses_by_id:
         raise MoodleError(f"course {course_id} has no local quiz activities; run `ravin scan {course_id}` first")
 
@@ -144,14 +104,14 @@ def questions_wizard(
                 f"  [{index}] {title} (activity {candidate_id}, section: {section_title}, questions: {status})",
                 file=output,
             )
-        activity_id = _select_number(quizzes, "Select an exam: ", input_func, output)
+        activity_id = select_number(quizzes, "Select an exam: ", input_func, output)
     if activity_id not in quiz_ids:
         raise MoodleError(f"activity {activity_id} is not a quiz in course {course_id}")
 
     while questions_path is None:
-        value = _prompt(input_func, "Questions Markdown file: ")
+        value = prompt(input_func, "Questions Markdown file: ")
         try:
-            candidate = _prompt_path_value(value)
+            candidate = prompt_path(value)
             questions_path = _questions_source(candidate)
         except MoodleError as exc:
             print(f"Invalid questions file: {exc}", file=output)
@@ -160,42 +120,17 @@ def questions_wizard(
     attachments = _attachment_sources(attachment_paths)
     if prompt_for_attachment and not attachments:
         while True:
-            value = _prompt(input_func, "Exam PDF (optional; press Enter to skip): ")
+            value = prompt(input_func, "Exam PDF (optional; press Enter to skip): ")
             if not value:
                 break
             try:
-                candidate = _prompt_path_value(value)
+                candidate = prompt_path(value)
                 attachments = _attachment_sources((candidate,))
                 break
             except MoodleError as exc:
                 print(f"Invalid exam file: {exc}", file=output)
 
     return course_id, activity_id, questions_path, attachments
-
-
-def _atomic_copy(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if source.resolve() == destination.resolve():
-        os.chmod(destination, 0o644)
-        return
-    temporary_path: Path | None = None
-    try:
-        with source.open("rb") as input_file, tempfile.NamedTemporaryFile(
-            mode="wb",
-            dir=destination.parent,
-            prefix=f".{destination.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as output_file:
-            shutil.copyfileobj(input_file, output_file, length=1024 * 1024)
-            output_file.flush()
-            os.fsync(output_file.fileno())
-            temporary_path = Path(output_file.name)
-        os.chmod(temporary_path, 0o644)
-        os.replace(temporary_path, destination)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
 
 
 def _questions_source(path: Path) -> Path:
@@ -271,12 +206,12 @@ def import_questions(
     )
     activity_directory = public / "courses" / str(course_id) / "content" / key
     questions_destination = activity_directory / "artifacts" / "questions.fa.md"
-    _atomic_copy(questions_source, questions_destination)
+    atomic_copy(questions_source, questions_destination)
 
     copied_files: list[str] = []
     for source in attachment_sources:
         filename = _clean_name(source.name, "exam-file")
-        _atomic_copy(source, activity_directory / "files" / filename)
+        atomic_copy(source, activity_directory / "files" / filename)
         copied_files.append(filename)
 
     # Persist enough local information for an offline scan to expose the exam
