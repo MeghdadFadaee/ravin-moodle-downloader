@@ -240,11 +240,20 @@ The command reads local course manifests and does not contact or log in to the L
 ravin transcribe
 ```
 
-Each successful lesson produces `artifacts/transcript.fa.txt` and portable `artifacts/transcript.meta.json`. The course manifest and global catalog are reconciled after every file, so the transcript becomes available in the library immediately.
+Each successful lesson produces `artifacts/transcript.fa.txt` and portable
+`artifacts/transcript.meta.json`. The course manifest and global catalog are
+reconciled after every file, so the transcript becomes available in the library
+immediately.
+
+The default `accurate` profile uses beam search, difficult-window fallback,
+word-level timestamps, silence hallucination controls, and protection against
+error propagation between long-audio windows. Domain prompts are disabled by
+default and must be supplied explicitly.
 
 Long runs are designed to resume safely:
 
-- Existing output is skipped only when its source size and modification time, Whisper model, and language still match.
+- Existing output is skipped only when its source metadata, Whisper model,
+  language, decoding profile, and prompt fingerprint still match.
 - FFprobe validates the audio stream before Whisper starts.
 - Each failed validation or transcription is retried twice by default, for three total attempts.
 - A permanently failed lesson is recorded and the next lesson still runs.
@@ -263,6 +272,15 @@ ravin transcribe 44 --dry-run
 # Use a smaller model or automatic language detection.
 ravin transcribe 44 --model small --language auto
 
+# Use the final-quality profile with expected domain terminology.
+ravin transcribe 44 --profile accurate --prompt "Expected terms and proper nouns"
+
+# Produce a faster draft with an explicit accuracy trade-off.
+ravin transcribe 44 --model turbo --profile balanced
+
+# Benchmark an explicit CPU thread count.
+ravin transcribe 44 --threads 8
+
 # Replace even matching transcripts.
 ravin transcribe 44 --overwrite
 
@@ -276,9 +294,23 @@ The defaults can also be stored in `.env`:
 WHISPER_MODEL="large"
 WHISPER_DEVICE="auto"
 WHISPER_LANGUAGE="fa"
+WHISPER_PROFILE="accurate"
+# WHISPER_THREADS="8"
+# WHISPER_INITIAL_PROMPT="Expected domain terminology and proper nouns"
 ```
 
-The `large` model needs substantial memory. Use `small` or `turbo` if the machine cannot load it. The first run may download model weights.
+Available profiles are `accurate`, `balanced`, and `fast`. The `large` model
+needs substantial memory. Use `small` or `turbo` only when the speed and memory
+trade-off is acceptable. CUDA and Apple Metal are selected automatically when
+available; FP16 is enabled only on supported accelerators. The first run may
+download model weights.
+
+The full prompt is never written to transcript metadata. A SHA-256 fingerprint
+is stored instead, allowing safe cache invalidation without publishing course
+vocabulary. Do not put credentials or secrets in a transcription prompt.
+
+See [TRANSCRIPTION.md](TRANSCRIPTION.md) before changing Whisper settings,
+preprocessing, cache behavior, or transcription tests.
 
 ## Codex summaries
 
@@ -379,6 +411,7 @@ ravin login
 ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
 ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
 ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
+                 [--profile {accurate,balanced,fast}] [--prompt TEXT] [--threads N]
 ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
 ravin questions [COURSE_ID] [ACTIVITY_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
 ravin recording [COURSE_ID] [ACTIVITY_ID] [VIDEO]

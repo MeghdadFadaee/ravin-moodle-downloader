@@ -26,7 +26,12 @@ from .recordings import format_recording_result, import_recording, recording_wiz
 from .scan import format_scan, scan_offline, scan_output, scan_remote, update_download_state
 from .server import _serve_library
 from .summarize import SummaryOptions, format_summary_result, summarize_courses
-from .transcribe import TranscriptionOptions, format_transcription_result, transcribe_courses
+from .transcribe import (
+    TRANSCRIPTION_PROFILES,
+    TranscriptionOptions,
+    format_transcription_result,
+    transcribe_courses,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -92,6 +97,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     transcribe_parser.add_argument(
         "--language", help="Whisper language code; use 'auto' for detection (default: fa)"
+    )
+    transcribe_parser.add_argument(
+        "--profile",
+        choices=TRANSCRIPTION_PROFILES,
+        help="decoding profile; defaults to WHISPER_PROFILE or accurate",
+    )
+    transcribe_parser.add_argument(
+        "--prompt",
+        help="expected domain vocabulary and proper nouns; empty disables the environment prompt",
+    )
+    transcribe_parser.add_argument(
+        "--threads",
+        type=int,
+        help="PyTorch CPU thread count; defaults to WHISPER_THREADS or the PyTorch default",
     )
     transcribe_parser.add_argument(
         "--retries", type=int, default=2, help="additional attempts per failed file (default: 2)"
@@ -303,6 +322,27 @@ def main(argv: list[str] | None = None) -> int:
                 else env_values.get("WHISPER_LANGUAGE", os.getenv("WHISPER_LANGUAGE", "fa"))
             )
             language = None if not language_value or language_value.casefold() == "auto" else language_value
+            profile = (
+                args.profile
+                or env_values.get("WHISPER_PROFILE")
+                or os.getenv("WHISPER_PROFILE")
+                or "accurate"
+            ).casefold()
+            prompt_value = (
+                args.prompt
+                if args.prompt is not None
+                else env_values.get("WHISPER_INITIAL_PROMPT", os.getenv("WHISPER_INITIAL_PROMPT"))
+            )
+            initial_prompt = prompt_value.strip() if prompt_value and prompt_value.strip() else None
+            threads_value: str | int | None = (
+                args.threads
+                if args.threads is not None
+                else env_values.get("WHISPER_THREADS", os.getenv("WHISPER_THREADS"))
+            )
+            try:
+                threads = int(threads_value) if threads_value not in (None, "") else None
+            except (TypeError, ValueError) as exc:
+                raise MoodleError("WHISPER_THREADS must be a positive integer") from exc
             result = transcribe_courses(
                 TranscriptionOptions(
                     public=public,
@@ -310,6 +350,9 @@ def main(argv: list[str] | None = None) -> int:
                     model=model,
                     device=device,
                     language=language,
+                    profile=profile,
+                    initial_prompt=initial_prompt,
+                    threads=threads,
                     retries=args.retries,
                     overwrite=args.overwrite,
                     dry_run=args.dry_run,

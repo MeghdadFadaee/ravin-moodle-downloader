@@ -17,3 +17,10 @@ Contributions are welcome. Keep changes focused, dependency-free where practical
 5. Open a pull request describing the problem, approach, and test coverage.
 
 Tests must use synthetic data. Do not include real course content, account identifiers, session values, or credentials in fixtures or issue reports.
+
+## Transcription changes
+
+Read [TRANSCRIPTION.md](TRANSCRIPTION.md) before modifying Whisper models,
+decoding parameters, prompts, media preprocessing, or transcript cache metadata.
+Transcription tests and examples must use neutral synthetic terminology rather
+than vocabulary copied from private course recordings.

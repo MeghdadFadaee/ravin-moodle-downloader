@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented here.
 
+## 0.15.0 - 2026-08-27
+
+- Add accurate, balanced, and fast Whisper decoding profiles.
+- Improve long-audio accuracy with beam search, temperature fallback, timestamped
+  hallucination control, and disabled previous-window conditioning.
+- Add opt-in domain prompts, privacy-safe prompt fingerprints, accelerator-aware
+  FP16, and configurable CPU threads.
+- Invalidate cached transcripts when output-affecting transcription settings
+  change and document the transcription accuracy and privacy policy.
+
 ## 0.14.0 - 2026-08-13
 
 - Add `ravin import URL` for restoring backups and updating course mirrors from direct export links.
