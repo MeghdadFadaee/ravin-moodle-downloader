@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 from .client import MoodleClient
 from .constants import LIVE_CLASS_MODULES
+from .layout import format_layout_repair, repair_activity_layout
 from .models import FileItem, MoodleError
 from .paths import (
     _activity_directory_name, _activity_root, _clean_name, _course_content_root,
@@ -133,6 +134,37 @@ def _build_library_catalog(
         except (AttributeError, MoodleError):
             structure = []
         consumed: set[int] = set()
+
+        desired_keys: dict[int, str] = {}
+        for section in structure:
+            for activity in section.get("activities", []):
+                try:
+                    activity_id = int(activity.get("id") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if activity_id <= 0:
+                    continue
+                desired_keys[activity_id] = _activity_directory_name(
+                    section.get("number"),
+                    activity.get("position"),
+                    activity_id,
+                    fallback=f"{course.id}\0{activity.get('url', '')}\0{activity.get('name', '')}",
+                )
+        for item in items:
+            if item.activity_id is None or int(item.activity_id) <= 0:
+                continue
+            desired_keys.setdefault(
+                int(item.activity_id),
+                _activity_directory_name(
+                    item.section_number,
+                    item.activity_position,
+                    item.activity_id,
+                    fallback=f"{course.id}\0{item.url}\0{item.activity}\0{item.filename}",
+                ),
+            )
+        layout_repair = repair_activity_layout(library, course.id, desired_keys)
+        if layout_repair.changed:
+            print(format_layout_repair(layout_repair), file=sys.stderr)
 
         def file_record(
             item: FileItem,

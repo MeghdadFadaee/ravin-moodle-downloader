@@ -102,6 +102,8 @@ SECTION_NUMBER--ACTIVITY_POSITION--ACTIVITY_ID
 
 Original filenames stay unchanged in the bundle's `files/` directory. Interrupted downloads use a `.part` suffix and resume with HTTP byte ranges. Completed files are skipped unless `--overwrite` is supplied.
 
+The final activity ID is the bundle's stable identity. If an instructor inserts, removes, or reorders sections or activities, an online scan automatically rekeys the complete local bundle to the LMS's current section and position before checking its state. An offline scan performs the same repair from the latest saved manifest. This preserves downloads and generated artifacts instead of reporting them missing or downloading duplicates. If both the old and current paths already contain data, Ravin safely merges them, keeps the current LMS layout authoritative, deduplicates identical files, and archives conflicting older versions.
+
 When an instructor replaces a resource, the manifest treats the filename currently published by Moodle as the **current** version and keeps other local files as **archived** versions. A replacement with the same filename and a different known size is downloaded automatically; `--overwrite` can force a same-name refresh when Moodle does not report a size. In both cases the existing file is preserved under `files/archive/` before the new download takes its place.
 
 The library's main Play or Open action always uses the current file. Older files remain available in an expandable archived-version list. If a transcript was generated from an archived file, both it and its dependent summary are marked stale; run `ravin transcribe COURSE_ID` and then `ravin summarize COURSE_ID` to regenerate them for the current file.
@@ -441,6 +443,7 @@ src/ravin/
 ├── recordings.py   # local live-class recording imports
 ├── exporter.py     # atomic course ZIP exports
 ├── importer.py     # safe URL restores and mirror updates
+├── layout.py       # activity-ID layout reconciliation
 ├── local_files.py  # atomic local copies and archived versions
 ├── wizard.py       # shared interactive import helpers
 ├── migration.py    # previous-layout migration

@@ -5,14 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
-from contextlib import contextmanager
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable
 
 from .catalog import _build_library_catalog
 from .client import MoodleClient
 from .constants import LIVE_CLASS_MODULES
+from .layout import format_layout_repair, manifest_lock as _manifest_lock, repair_courses_layout
 from .models import FileItem, MoodleError
 from .paths import (
     _activity_directory_name,
@@ -38,28 +39,6 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(path)
-
-
-@contextmanager
-def _manifest_lock(courses_root: Path) -> Iterator[None]:
-    courses_root.mkdir(parents=True, exist_ok=True)
-    lock_path = courses_root / ".manifest.lock"
-    with lock_path.open("a+", encoding="utf-8") as lock:
-        try:
-            import fcntl
-
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            pass
-        try:
-            yield
-        finally:
-            try:
-                import fcntl
-
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-            except (ImportError, OSError):
-                pass
 
 
 def _activity_directory(public: Path, course_id: int, section: dict[str, Any], item: dict[str, Any]) -> Path:
@@ -391,9 +370,12 @@ def _catalog_from_manifests(courses_root: Path, now: str) -> dict[str, Any]:
 
 
 def _write_manifests(public: Path, courses: Iterable[dict[str, Any]], *, remote: bool) -> dict[str, Any]:
+    courses = list(courses)
     courses_root = public / "courses"
     now = _utc_now()
     with _manifest_lock(courses_root):
+        for result in repair_courses_layout(public, courses, assume_locked=True):
+            print(format_layout_repair(result), file=sys.stderr)
         for course in courses:
             reconciled = _reconcile_course(public, course)
             manifest_path = courses_root / str(course["id"]) / "manifest.json"

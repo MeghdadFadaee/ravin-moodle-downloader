@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented here.
 
+## 0.16.0 - 2026-08-30
+
+- Treat Moodle activity IDs as stable local bundle identities while retaining sortable `SECTION--POSITION--ID` paths.
+- Automatically rekey complete activity bundles when instructors reorder sections or activities.
+- Repair layouts before online discovery and during offline scans, imports, and manifest reconciliation.
+- Safely merge duplicate old/current paths, deduplicate identical data, and archive conflicting older files and artifacts.
+- Preserve orphaned and ID-less bundles without presenting them as current LMS activities.
+
 ## 0.15.0 - 2026-08-27
 
 - Add accurate, balanced, and fast Whisper decoding profiles.
