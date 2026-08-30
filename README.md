@@ -47,6 +47,27 @@ ravin import EXPORT_URL
 ravin serve --open
 ```
 
+## Sync the public library to Termux
+
+Sync `public/` to an SSH host without transferring video files. Provide
+your destination at runtime and preview the changes first:
+
+```bash
+./sync-public.sh --dry-run \
+  --destination 'user@example-host:/path/to/project/public/'
+```
+
+Then perform the sync:
+
+```bash
+./sync-public.sh \
+  --destination 'user@example-host:/path/to/project/public/'
+```
+
+You can alternatively set `SYNC_PUBLIC_DESTINATION` in your local shell. The
+script does not remove remote files by default; pass `--delete` when an exact
+mirror of non-video files is required.
+
 `scan` replaces the former separate course-listing, file-listing, and library-generation commands. It reads the LMS structure, reconciles everything already present on disk, and writes the JSON manifests consumed by the static site.
 
 Scan only selected courses or print machine-readable results:
