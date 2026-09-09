@@ -9,17 +9,6 @@ All notable changes to this project will be documented here.
 - Repair layouts before online discovery and during offline scans, imports, and manifest reconciliation.
 - Safely merge duplicate old/current paths, deduplicate identical data, and archive conflicting older files and artifacts.
 - Preserve orphaned and ID-less bundles without presenting them as current LMS activities.
-
-## 0.15.0 - 2026-08-27
-
-- Add accurate, balanced, and fast Whisper decoding profiles.
-- Improve long-audio accuracy with beam search, temperature fallback, timestamped
-  hallucination control, and disabled previous-window conditioning.
-- Add opt-in domain prompts, privacy-safe prompt fingerprints, accelerator-aware
-  FP16, and configurable CPU threads.
-- Invalidate cached transcripts when output-affecting transcription settings
-  change and document the transcription accuracy and privacy policy.
-
 ## 0.14.0 - 2026-08-13
 
 - Add `ravin import URL` for restoring backups and updating course mirrors from direct export links.

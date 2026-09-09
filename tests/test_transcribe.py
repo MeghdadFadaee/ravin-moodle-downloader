@@ -20,12 +20,10 @@ class FakeModel:
         self.failures = failures or set()
         self.interrupt = interrupt
         self.calls: list[str] = []
-        self.call_options: list[dict[str, object]] = []
 
-    def transcribe(self, source: str, **kwargs: object) -> dict[str, str]:
+    def transcribe(self, source: str, **_kwargs: object) -> dict[str, str]:
         name = Path(source).name
         self.calls.append(name)
-        self.call_options.append(kwargs)
         if self.interrupt:
             raise KeyboardInterrupt
         if name in self.failures:
@@ -111,19 +109,12 @@ class TranscriptionTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.succeeded, 1)
         self.assertEqual(model.calls, ["lesson.mp4"])
-        self.assertEqual(model.call_options[0]["beam_size"], 5)
-        self.assertFalse(model.call_options[0]["condition_on_previous_text"])
-        self.assertTrue(model.call_options[0]["word_timestamps"])
-        self.assertFalse(model.call_options[0]["fp16"])
         artifacts = self.public / "courses" / "44" / "content" / "002--001--4901" / "artifacts"
         transcript = artifacts / "transcript.fa.txt"
         metadata = json.loads((artifacts / "transcript.meta.json").read_text(encoding="utf-8"))
         self.assertEqual(transcript.read_text(encoding="utf-8"), "transcript for lesson.mp4\n")
         self.assertEqual(metadata["source"], "../files/lesson.mp4")
         self.assertEqual(metadata["transcript"], "transcript.fa.txt")
-        self.assertEqual(metadata["schema_version"], 2)
-        self.assertEqual(metadata["transcription_settings"]["profile"], "accurate")
-        self.assertFalse(metadata["transcription_settings"]["initial_prompt_set"])
         self.assertNotIn(str(self.root), json.dumps(metadata))
         self.assertEqual(os.stat(transcript).st_mode & 0o777, 0o644)
         manifest = json.loads(
@@ -147,45 +138,6 @@ class TranscriptionTests(unittest.TestCase):
         ).run()
         self.assertEqual(second.skipped, 1)
         self.assertFalse(second_loader_called)
-
-    def test_prompt_is_fingerprinted_and_invalidates_cached_output(self) -> None:
-        self.write_course(["lesson.mp4"])
-        private_prompt = "Confidential course vocabulary"
-        first_model = FakeModel()
-
-        first = self.transcriber(first_model, initial_prompt=private_prompt).run()
-
-        self.assertEqual(first.succeeded, 1)
-        artifacts = self.public / "courses" / "44" / "content" / "002--001--4901" / "artifacts"
-        metadata = json.loads((artifacts / "transcript.meta.json").read_text(encoding="utf-8"))
-        serialized = json.dumps(metadata)
-        self.assertNotIn(private_prompt, serialized)
-        settings = metadata["transcription_settings"]
-        self.assertTrue(settings["initial_prompt_set"])
-        self.assertEqual(len(settings["initial_prompt_sha256"]), 64)
-        self.assertEqual(first_model.call_options[0]["initial_prompt"], private_prompt)
-
-        second_model = FakeModel()
-        second = self.transcriber(
-            second_model,
-            initial_prompt="Different vocabulary",
-        ).run()
-
-        self.assertEqual(second.succeeded, 1)
-        self.assertEqual(second.skipped, 0)
-        self.assertEqual(second_model.calls, ["lesson.mp4"])
-
-    def test_fast_profile_uses_greedy_decoding(self) -> None:
-        self.write_course(["lesson.mp4"])
-        model = FakeModel()
-
-        result = self.transcriber(model, profile="fast").run()
-
-        self.assertEqual(result.succeeded, 1)
-        options = model.call_options[0]
-        self.assertEqual(options["temperature"], 0.0)
-        self.assertNotIn("beam_size", options)
-        self.assertFalse(options["word_timestamps"])
 
     def test_permanent_failure_is_retried_recorded_and_does_not_stop_batch(self) -> None:
         self.write_course(["bad.mp4", "good.mp4"])

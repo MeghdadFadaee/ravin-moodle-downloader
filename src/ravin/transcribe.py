@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import gc
-import hashlib
 import json
 import os
 import shutil
@@ -21,9 +20,6 @@ from typing import Any, Callable, Iterator
 from .models import MoodleError
 from .paths import _clean_name, _read_json_object
 from .scan import scan_offline
-
-TRANSCRIPTION_PROFILES = ("accurate", "balanced", "fast")
-TRANSCRIPTION_SETTINGS_VERSION = 1
 
 
 def _utc_now() -> str:
@@ -121,7 +117,6 @@ def _select_device(torch: Any, requested: str) -> str:
 
 
 def _load_model(model_name: str, requested_device: str) -> tuple[Any, Any, str]:
-    os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     try:
         import torch
         import whisper
@@ -136,76 +131,6 @@ def _load_model(model_name: str, requested_device: str) -> tuple[Any, Any, str]:
     except Exception as exc:
         raise MoodleError(f"could not load Whisper model {model_name!r}: {_compact_error(exc)}") from exc
     return model, torch, device
-
-
-def _configure_threads(torch: Any, requested: int | None) -> int | None:
-    if torch is None:
-        return None
-    if requested is not None:
-        if requested < 1:
-            raise MoodleError("--threads must be a positive integer")
-        torch.set_num_threads(requested)
-    return int(torch.get_num_threads())
-
-
-def _transcription_settings(options: "TranscriptionOptions") -> dict[str, Any]:
-    initial_prompt = options.initial_prompt.strip() if options.initial_prompt else None
-    prompt_fingerprint = (
-        hashlib.sha256(initial_prompt.encode("utf-8")).hexdigest()
-        if initial_prompt
-        else None
-    )
-    return {
-        "version": TRANSCRIPTION_SETTINGS_VERSION,
-        "profile": options.profile,
-        "initial_prompt_set": initial_prompt is not None,
-        "initial_prompt_sha256": prompt_fingerprint,
-    }
-
-
-def _decode_options(
-    options: "TranscriptionOptions",
-    device: str,
-) -> dict[str, Any]:
-    common: dict[str, Any] = {
-        "language": options.language,
-        "task": "transcribe",
-        "condition_on_previous_text": False,
-        "fp16": device in {"cuda", "mps"},
-        "compression_ratio_threshold": 2.4,
-        "logprob_threshold": -1.0,
-        "no_speech_threshold": 0.6,
-    }
-    initial_prompt = options.initial_prompt.strip() if options.initial_prompt else None
-    if initial_prompt:
-        common.update(
-            initial_prompt=initial_prompt,
-            carry_initial_prompt=True,
-        )
-
-    if options.profile == "accurate":
-        common.update(
-            temperature=(0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
-            beam_size=5,
-            best_of=5,
-            patience=1.0,
-            word_timestamps=True,
-            hallucination_silence_threshold=1.5,
-        )
-    elif options.profile == "balanced":
-        common.update(
-            temperature=(0.0, 0.2, 0.4),
-            beam_size=3,
-            best_of=3,
-            patience=1.0,
-            word_timestamps=False,
-        )
-    else:
-        common.update(
-            temperature=0.0,
-            word_timestamps=False,
-        )
-    return common
 
 
 def _validate_media(source: Path) -> None:
@@ -250,9 +175,6 @@ class TranscriptionOptions:
     model: str = "large"
     device: str = "auto"
     language: str | None = "fa"
-    profile: str = "accurate"
-    initial_prompt: str | None = None
-    threads: int | None = None
     retries: int = 2
     overwrite: bool = False
     dry_run: bool = False
@@ -310,7 +232,6 @@ class CourseTranscriber:
                 "model": self.options.model,
                 "device": self.options.device,
                 "language": self.options.language,
-                "transcription_settings": _transcription_settings(self.options),
                 "course_ids": list(self.options.course_ids),
                 "current_index": self.current_index,
                 "current": self.current_job.label() if self.current_job else None,
@@ -331,7 +252,6 @@ class CourseTranscriber:
                 "model": self.options.model,
                 "device": self.options.device,
                 "language": self.options.language,
-                "transcription_settings": _transcription_settings(self.options),
                 "course_ids": list(self.options.course_ids),
             },
         )
@@ -392,13 +312,12 @@ class CourseTranscriber:
     def _expected_metadata(self, job: TranscriptionJob) -> dict[str, Any]:
         source_stat = job.source.stat()
         return {
-            "schema_version": 2,
+            "schema_version": 1,
             "source": f"../files/{job.source.name}",
             "source_size": source_stat.st_size,
             "source_mtime_ns": source_stat.st_mtime_ns,
             "model": self.options.model,
             "language": self.options.language,
-            "transcription_settings": _transcription_settings(self.options),
             "transcript": "transcript.fa.txt",
         }
 
@@ -469,7 +388,6 @@ class CourseTranscriber:
                 "error": public_message,
                 "model": self.options.model,
                 "language": self.options.language,
-                "transcription_settings": _transcription_settings(self.options),
                 "attempts": self.options.retries + 1,
             },
         )
@@ -485,11 +403,6 @@ class CourseTranscriber:
     def run(self) -> TranscriptionResult:
         if self.options.retries < 0:
             raise MoodleError("--retries cannot be negative")
-        if self.options.profile not in TRANSCRIPTION_PROFILES:
-            choices = ", ".join(TRANSCRIPTION_PROFILES)
-            raise MoodleError(f"--profile must be one of: {choices}")
-        if self.options.threads is not None and self.options.threads < 1:
-            raise MoodleError("--threads must be a positive integer")
         if not self.options.dry_run:
             scan_offline(self.public, self.options.course_ids)
         jobs = self._discover_jobs()
@@ -516,9 +429,6 @@ class CourseTranscriber:
         self._write_state()
         try:
             model, self._torch, device = self.model_loader(self.options.model, self.options.device)
-            active_threads = _configure_threads(self._torch, self.options.threads)
-            if device == "cpu" and active_threads is not None:
-                print(f"Using {active_threads} CPU thread(s).", file=sys.stderr)
         except Exception:
             self._finish("failed_to_start", 2)
             raise
@@ -533,11 +443,7 @@ class CourseTranscriber:
                 if self.options.validate_media:
                     self._with_retries(lambda: self.media_validator(job.source), job, "validation")
                 result = self._with_retries(
-                    lambda: model.transcribe(
-                        str(job.source),
-                        verbose=False,
-                        **_decode_options(self.options, device),
-                    ),
+                    lambda: model.transcribe(str(job.source), language=self.options.language, verbose=False),
                     job,
                     "transcription",
                 )

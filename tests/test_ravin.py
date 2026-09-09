@@ -93,26 +93,9 @@ class ParserTests(unittest.TestCase):
         download = build_parser().parse_args(["download", "44", "--retries", "2"])
         self.assertEqual(download.course_id, 44)
         self.assertEqual(download.retries, 2)
-        transcribe = build_parser().parse_args(
-            [
-                "transcribe",
-                "44",
-                "--model",
-                "small",
-                "--profile",
-                "balanced",
-                "--prompt",
-                "Expected terminology",
-                "--threads",
-                "4",
-                "--no-keep-awake",
-            ]
-        )
+        transcribe = build_parser().parse_args(["transcribe", "44", "--model", "small", "--no-keep-awake"])
         self.assertEqual(transcribe.course_ids, [44])
         self.assertEqual(transcribe.model, "small")
-        self.assertEqual(transcribe.profile, "balanced")
-        self.assertEqual(transcribe.prompt, "Expected terminology")
-        self.assertEqual(transcribe.threads, 4)
         self.assertFalse(transcribe.keep_awake)
         summarize = build_parser().parse_args(["summarize", "44", "--model", "gpt-test"])
         self.assertEqual(summarize.course_ids, [44])
