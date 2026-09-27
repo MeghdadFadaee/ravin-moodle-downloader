@@ -29,6 +29,7 @@ from .paths import (
 
 MANIFEST_SCHEMA_VERSION = 1
 STATE_VALUES = {"missing", "partial", "complete", "stale", "error", "not_applicable"}
+PORTABLE_MTIME_TOLERANCE_NS = 2_000_000_000
 
 
 def _utc_now() -> str:
@@ -120,7 +121,10 @@ def _artifact_state(
         expected_mtime = metadata.get("source_mtime_ns")
         if expected_size is not None and int(expected_size) != source_stat.st_size:
             return "error" if failed else "stale"
-        if expected_mtime is not None and int(expected_mtime) != source_stat.st_mtime_ns:
+        if (
+            expected_mtime is not None
+            and abs(int(expected_mtime) - source_stat.st_mtime_ns) > PORTABLE_MTIME_TOLERANCE_NS
+        ):
             return "error" if failed else "stale"
         return "complete"
 
@@ -143,7 +147,6 @@ def _artifact_state(
         if (
             metadata.get("source_sha256") != current["source_sha256"]
             or int(metadata.get("source_size") or -1) != current["source_size"]
-            or int(metadata.get("source_mtime_ns") or -1) != current["source_mtime_ns"]
         ):
             return "error" if failed else "stale"
         return "complete"
