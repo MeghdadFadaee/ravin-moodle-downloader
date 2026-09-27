@@ -53,20 +53,22 @@ Sync `public/` to an SSH host without transferring video files. Provide
 your destination at runtime and preview the changes first:
 
 ```bash
-./sync-public.sh --dry-run \
+ravin sync-public --dry-run \
   --destination 'user@example-host:/path/to/project/public/'
 ```
 
 Then perform the sync:
 
 ```bash
-./sync-public.sh \
+ravin sync-public \
   --destination 'user@example-host:/path/to/project/public/'
 ```
 
 You can alternatively set `SYNC_PUBLIC_DESTINATION` in your local shell. The
-script does not remove remote files by default; pass `--delete` when an exact
+command does not remove remote files by default; pass `--delete` when an exact
 mirror of non-video files is required.
+
+The original `./sync-public.sh` entry point remains available for compatibility.
 
 `scan` replaces the former separate course-listing, file-listing, and library-generation commands. It reads the LMS structure, reconciles everything already present on disk, and writes the JSON manifests consumed by the static site.
 
@@ -222,6 +224,12 @@ Start the interactive import wizard:
 
 ```bash
 ravin questions
+```
+
+For a declared course-level final exam, use the dedicated shortcut:
+
+```bash
+ravin final-exam
 ```
 
 The wizard:
@@ -437,9 +445,11 @@ ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
 ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
 ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
 ravin questions [COURSE_ID] [ACTIVITY_OR_ASSESSMENT_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
+ravin final-exam [COURSE_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
 ravin recording [COURSE_ID] [ACTIVITY_ID] [VIDEO]
 ravin export [--output ARCHIVE.zip] [--include-videos] [--public PATH]
 ravin import URL [--timeout SECONDS] [--json] [--public PATH]
+ravin sync-public [--destination USER@HOST:PATH] [--dry-run] [--delete] [--public PATH]
 ravin serve [--host ADDRESS] [--port PORT] [--open] [--public PATH]
 ```
 

@@ -26,6 +26,7 @@ from .recordings import format_recording_result, import_recording, recording_wiz
 from .scan import format_scan, scan_offline, scan_output, scan_remote, update_download_state
 from .server import _serve_library
 from .summarize import SummaryOptions, format_summary_result, summarize_courses
+from .sync_public import sync_public
 from .transcribe import TranscriptionOptions, format_transcription_result, transcribe_courses
 
 
@@ -167,6 +168,32 @@ def build_parser() -> argparse.ArgumentParser:
     questions_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
     questions_parser.add_argument("--json", action="store_true", help="print imported paths as JSON")
 
+    final_exam_parser = subparsers.add_parser(
+        "final-exam",
+        help="import questions and attachments for a declared final exam",
+        description=(
+            "Import questions and optional attachments for the course assessment named final-exam; "
+            "all positional values are optional."
+        ),
+    )
+    final_exam_parser.add_argument("course_id", nargs="?", type=int, help="course containing the final exam")
+    final_exam_parser.add_argument(
+        "questions",
+        nargs="?",
+        type=Path,
+        help="UTF-8 Markdown final-exam questions and answers",
+    )
+    final_exam_parser.add_argument(
+        "--file",
+        dest="files",
+        type=Path,
+        action="append",
+        default=[],
+        help="optional original exam attachment; repeat for multiple files",
+    )
+    final_exam_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    final_exam_parser.add_argument("--json", action="store_true", help="print imported paths as JSON")
+
     recording_parser = subparsers.add_parser(
         "recording",
         aliases=["recordings"],
@@ -211,6 +238,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="network read timeout in seconds (default: 60)",
     )
     import_parser.add_argument("--json", action="store_true", help="print import and scan details as JSON")
+
+    sync_parser = subparsers.add_parser(
+        "sync-public",
+        help="sync the public library to an SSH destination without videos",
+        description="Sync public course data with rsync while excluding current and partial video files.",
+    )
+    sync_parser.add_argument(
+        "-d",
+        "--destination",
+        help="rsync SSH destination (USER@HOST:PATH); defaults to SYNC_PUBLIC_DESTINATION",
+    )
+    sync_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    sync_parser.add_argument("-n", "--dry-run", action="store_true", help="show changes without transferring files")
+    sync_parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="delete remote non-video files that are missing locally",
+    )
 
     serve_parser = subparsers.add_parser("serve", help="serve the public learning library locally")
     serve_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
@@ -258,10 +303,18 @@ def main(argv: list[str] | None = None) -> int:
             _serve_library(args.public, args.host, args.port, args.open)
             return 0
 
+        if args.command == "sync-public":
+            return sync_public(
+                args.public,
+                args.destination,
+                dry_run=args.dry_run,
+                delete=args.delete,
+            )
+
         public = getattr(args, "public", Path("public")).expanduser().resolve()
         if args.command in {
-            "scan", "download", "transcribe", "summarize", "questions", "recording", "recordings", "export",
-            "import",
+            "scan", "download", "transcribe", "summarize", "questions", "final-exam", "recording",
+            "recordings", "export", "import",
         }:
             _maybe_migrate(public)
 
@@ -353,18 +406,19 @@ def main(argv: list[str] | None = None) -> int:
             )
             return result.exit_code
 
-        if args.command == "questions":
-            interactive = args.course_id is None or args.activity_id is None or args.questions is None
+        if args.command in {"questions", "final-exam"}:
+            activity_id = "final-exam" if args.command == "final-exam" else args.activity_id
+            interactive = args.course_id is None or activity_id is None or args.questions is None
             course_id, activity_id, questions_path, attachment_paths = questions_wizard(
                 public,
                 args.course_id,
-                args.activity_id,
+                activity_id,
                 args.questions,
                 tuple(args.files),
                 prompt_for_attachment=interactive,
             ) if interactive else (
                 args.course_id,
-                args.activity_id,
+                activity_id,
                 args.questions,
                 tuple(args.files),
             )

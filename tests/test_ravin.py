@@ -111,6 +111,12 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(questions_wizard.course_id)
         self.assertIsNone(questions_wizard.activity_id)
         self.assertIsNone(questions_wizard.questions)
+        final_exam = build_parser().parse_args(
+            ["final-exam", "44", "final-exam.md", "--file", "final-exam.pdf"]
+        )
+        self.assertEqual(final_exam.course_id, 44)
+        self.assertEqual(final_exam.questions, Path("final-exam.md"))
+        self.assertEqual(final_exam.files, [Path("final-exam.pdf")])
         recording = build_parser().parse_args(["recording", "44", "5097", "class.mp4"])
         self.assertEqual(recording.course_id, 44)
         self.assertEqual(recording.activity_id, 5097)
@@ -132,6 +138,12 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(import_archive.url, "https://mirror.example/exports/latest.zip")
         self.assertEqual(import_archive.timeout, 120)
+        sync_public = build_parser().parse_args(
+            ["sync-public", "--destination", "user@example:/srv/public/", "--dry-run", "--delete"]
+        )
+        self.assertEqual(sync_public.destination, "user@example:/srv/public/")
+        self.assertTrue(sync_public.dry_run)
+        self.assertTrue(sync_public.delete)
         serve = build_parser().parse_args(["serve", "--port", "9000"])
         self.assertEqual(serve.port, 9000)
 
