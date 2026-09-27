@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .assessments import assessment_directory, merge_assessments
 from .catalog import _build_library_catalog
 from .client import MoodleClient
 from .constants import LIVE_CLASS_MODULES
@@ -42,6 +43,12 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 
 
 def _activity_directory(public: Path, course_id: int, section: dict[str, Any], item: dict[str, Any]) -> Path:
+    assessment_id = item.get("assessment_id")
+    if assessment_id:
+        directory = assessment_directory(public, course_id, str(assessment_id))
+        item["key"] = f"assessment--{assessment_id}"
+        item["bundle_path"] = f"assessments/{assessment_id}"
+        return directory
     key = _activity_directory_name(
         item.get("section_number", section.get("number")),
         item.get("activity_position"),
@@ -216,6 +223,7 @@ def _file_versions(
 
 
 def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
+    course = merge_assessments(public, course)
     course_id = int(course.get("id") or 0)
     downloaded_bytes = 0
     type_counts: dict[str, int] = {}
@@ -228,7 +236,12 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
         "downloads": category_counts(),
         "transcripts": category_counts(),
         "summaries": category_counts(),
-        "assessments": category_counts(),
+        "assessments": {
+            **category_counts(),
+            "upcoming": 0,
+            "active": 0,
+            "unavailable": 0,
+        },
         "recordings": category_counts(),
         "partial": 0,
         "stale": 0,
@@ -259,7 +272,13 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 and summary_state == "complete"
             ):
                 summary_state = "stale"
-            questions_state = _artifact_state(activity_directory, "questions", assessment_applicable)
+            assessment_status = str(item.get("assessment_status") or "")
+            questions_publishable = assessment_status not in {"upcoming", "active", "unavailable"}
+            questions_state = _artifact_state(
+                activity_directory,
+                "questions",
+                assessment_applicable and questions_publishable,
+            )
             for value in (download_state, transcript_state, summary_state, questions_state):
                 if value not in STATE_VALUES:
                     raise MoodleError(f"invalid manifest state {value!r}")
@@ -278,6 +297,8 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 else download_state
             )
             item["artifacts"] = _discover_artifacts(activity_directory, public)
+            if assessment_applicable and not questions_publishable:
+                item["artifacts"].pop("questions", None)
             versioned_activity = (
                 item.get("activity_type") == "resource"
                 or item.get("activity_type") in LIVE_CLASS_MODULES
@@ -305,7 +326,10 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 state_counts["summaries"][summary_state] += 1
             if assessment_applicable:
                 state_counts["assessments"]["total"] += 1
-                state_counts["assessments"][questions_state] += 1
+                if assessment_status in {"upcoming", "active", "unavailable"}:
+                    state_counts["assessments"][assessment_status] += 1
+                else:
+                    state_counts["assessments"][questions_state] += 1
             if recording_applicable:
                 recording_state = download_state if download_state != "not_applicable" else "missing"
                 state_counts["recordings"]["total"] += 1
@@ -472,7 +496,7 @@ def format_scan(catalog: dict[str, Any]) -> str:
             total = int(state.get("total") or 0)
             details = [
                 f"{int(state.get(value) or 0)} {value}"
-                for value in ("missing", "partial", "stale", "error")
+                for value in ("missing", "partial", "stale", "error", "upcoming", "active", "unavailable")
                 if int(state.get(value) or 0)
             ]
             suffix = f" · {', '.join(details)}" if details else ""
@@ -482,6 +506,8 @@ def format_scan(catalog: dict[str, Any]) -> str:
 
         def pending(name: str) -> int:
             state = course[name]
+            if name == "assessments":
+                return sum(int(state.get(value) or 0) for value in ("missing", "partial", "stale", "error"))
             return max(int(state.get("total") or 0) - int(state.get("complete") or 0), 0)
 
         def quantity(value: int, singular: str, plural: str | None = None) -> str:

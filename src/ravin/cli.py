@@ -29,6 +29,10 @@ from .summarize import SummaryOptions, format_summary_result, summarize_courses
 from .transcribe import TranscriptionOptions, format_transcription_result, transcribe_courses
 
 
+def _assessment_reference(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scan and download your Ravin Academy Moodle courses.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -145,7 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Import exam questions with a course-and-quiz wizard; all positional values are optional.",
     )
     questions_parser.add_argument("course_id", nargs="?", type=int, help="course containing the quiz")
-    questions_parser.add_argument("activity_id", nargs="?", type=int, help="Moodle quiz activity ID")
+    questions_parser.add_argument(
+        "activity_id",
+        nargs="?",
+        type=_assessment_reference,
+        help="Moodle quiz activity ID or local assessment ID",
+    )
     questions_parser.add_argument("questions", nargs="?", type=Path, help="UTF-8 Markdown questions and answers")
     questions_parser.add_argument(
         "--file",

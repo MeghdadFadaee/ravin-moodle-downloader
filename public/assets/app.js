@@ -255,6 +255,13 @@ function resourceMatches(item) {
 }
 
 function resourceRow(item, index) {
+  const assessmentLabels = {
+    upcoming: "Upcoming",
+    active: "In progress",
+    ended: "Ended",
+    unavailable: "Not yet available",
+  };
+  const assessmentLabel = assessmentLabels[item.assessment_status] || "";
   const row = document.createElement("article");
   row.className = `resource-row${isComplete(item) ? " completed" : ""}`;
   const number = document.createElement("span");
@@ -272,7 +279,7 @@ function resourceRow(item, index) {
   const filename = document.createElement("span");
   filename.className = "resource-file";
   filename.dir = "auto";
-  filename.textContent = item.filename || item.badge || item.activity_type;
+  filename.textContent = item.filename || assessmentLabel || item.badge || item.activity_type;
   fileLine.append(filename);
   if ((item.file_versions || []).some((version) => version.state === "current")) {
     const currentBadge = document.createElement("span");
@@ -366,15 +373,19 @@ function resourceRow(item, index) {
   const dot = document.createElement("span");
   dot.className = `status-dot${item.status === "missing" ? " missing" : item.status === "online" ? " online" : ""}`;
   const size = document.createElement("span");
-  size.textContent = item.status === "partial"
+  size.textContent = assessmentLabel || (item.status === "partial"
     ? `${formatBytes(item.local_bytes)} partial`
     : item.status === "online"
       ? (item.lms_completed ? "LMS complete" : "Online")
-      : formatBytes(item.size);
+      : formatBytes(item.size));
   meta.append(type, dot, size);
 
   let action;
-  if (item.status === "downloaded" && item.kind === "video") {
+  if (item.kind === "assessment" && ["upcoming", "active", "unavailable"].includes(item.assessment_status)) {
+    action = document.createElement("span");
+    action.textContent = assessmentLabel;
+    action.setAttribute("aria-disabled", "true");
+  } else if (item.status === "downloaded" && item.kind === "video") {
     action = document.createElement("button");
     action.type = "button";
     action.textContent = "Play";

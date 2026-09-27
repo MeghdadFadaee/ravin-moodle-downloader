@@ -186,6 +186,38 @@ Use `--public PATH` for another library root, `--timeout SECONDS` for slow serve
 
 ## Exam questions and answers
 
+Final exams can be declared independently of Moodle in
+`public/courses/COURSE_ID/assessments.json`. This keeps exams visible when Moodle hides the
+quiz activity and preserves them across later online scans. A local exam may optionally set
+`activity_id` to link it to a Moodle quiz:
+
+```json
+{
+  "schema_version": 1,
+  "assessments": [
+    {
+      "id": "final-exam",
+      "type": "final",
+      "title": "Final exam",
+      "status": "ended",
+      "activity_id": 6126
+    }
+  ]
+}
+```
+
+Supported statuses are `upcoming`, `active`, `ended`, and `unavailable`. Only ended exams
+may receive published questions and answers. Do not place active exam material anywhere
+under `public/`: hiding it in the interface would not prevent direct access to the file.
+
+Unlinked local exam material is stored in a stable course-level bundle:
+
+```text
+public/courses/44/assessments/final-exam/
+├── files/
+└── artifacts/questions.fa.md
+```
+
 Start the interactive import wizard:
 
 ```bash
@@ -199,7 +231,8 @@ The wizard:
 3. Prompts for the UTF-8 Markdown questions-and-answers file.
 4. Prompts for an optional original exam PDF.
 
-You can enter either a displayed list number or the actual course/activity ID. File paths can be pasted or dragged into the terminal.
+You can enter either a displayed list number, a Moodle activity ID, or a local assessment ID
+such as `final-exam`. File paths can be pasted or dragged into the terminal.
 
 For scripting, all values can still be passed directly:
 
@@ -403,7 +436,7 @@ ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
 ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
 ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
 ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
-ravin questions [COURSE_ID] [ACTIVITY_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
+ravin questions [COURSE_ID] [ACTIVITY_OR_ASSESSMENT_ID] [QUESTIONS.md] [--file ATTACHMENT ...]
 ravin recording [COURSE_ID] [ACTIVITY_ID] [VIDEO]
 ravin export [--output ARCHIVE.zip] [--include-videos] [--public PATH]
 ravin import URL [--timeout SECONDS] [--json] [--public PATH]
@@ -428,6 +461,7 @@ src/ravin/
 ├── transcribe.py   # resilient manifest-driven Whisper batches
 ├── summarize.py    # resilient Codex CLI study-guide batches
 ├── questions.py    # local exam-question and attachment imports
+├── assessments.py  # durable course-level exam overlays
 ├── recordings.py   # local live-class recording imports
 ├── exporter.py     # atomic course ZIP exports
 ├── importer.py     # safe URL restores and mirror updates

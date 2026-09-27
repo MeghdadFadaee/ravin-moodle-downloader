@@ -34,17 +34,16 @@ def select_number(
     prompt_message: str,
     input_func: Callable[[str], str],
     output: TextIO,
-) -> int:
-    valid_ids = {int(choice[0]) for choice in choices}
+) -> Any:
+    valid_ids = {str(choice[0]): choice[0] for choice in choices}
     while True:
         value = prompt(input_func, prompt_message)
         try:
             selected = int(value)
         except ValueError:
-            print("Please enter a list number or ID.", file=output)
-            continue
+            selected = 0
         if 1 <= selected <= len(choices):
-            return int(choices[selected - 1][0])
-        if selected in valid_ids:
-            return selected
+            return choices[selected - 1][0]
+        if value in valid_ids:
+            return valid_ids[value]
         print("That selection is not in the list. Please try again.", file=output)

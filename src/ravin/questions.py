@@ -10,15 +10,15 @@ from typing import Any, Callable, TextIO
 
 from .local_files import atomic_copy
 from .models import MoodleError
-from .paths import _activity_directory_name, _clean_name, _read_json_object
-from .scan import _atomic_json, _manifest_lock, scan_offline
+from .paths import _clean_name, _read_json_object
+from .scan import _activity_directory, _atomic_json, _manifest_lock, scan_offline
 from .wizard import prompt, prompt_path, select_number
 
 
 @dataclass(frozen=True)
 class QuestionsImportResult:
     course_id: int
-    activity_id: int
+    activity_id: int | str
     activity_key: str
     activity_title: str
     questions: str
@@ -46,8 +46,8 @@ def _course_choices(public: Path) -> list[tuple[int, str, dict[str, Any]]]:
     return choices
 
 
-def _quiz_choices(course: dict[str, Any]) -> list[tuple[int, str, str, str]]:
-    choices: list[tuple[int, str, str, str]] = []
+def _quiz_choices(course: dict[str, Any]) -> list[tuple[int | str, str, str, str]]:
+    choices: list[tuple[int | str, str, str, str]] = []
     for section in course.get("sections", []):
         if not isinstance(section, dict):
             continue
@@ -58,18 +58,19 @@ def _quiz_choices(course: dict[str, Any]) -> list[tuple[int, str, str, str]]:
             if item.get("activity_type") != "quiz" and item.get("kind") != "assessment":
                 continue
             activity_id = int(item.get("activity_id") or 0)
-            if not activity_id:
+            reference: int | str = str(item.get("assessment_id") or "") or activity_id
+            if not reference:
                 continue
-            title = str(item.get("title") or f"Quiz {activity_id}")
+            title = str(item.get("title") or f"Quiz {reference}")
             status = str(item.get("state", {}).get("questions") or "missing")
-            choices.append((activity_id, title, section_title, status))
+            choices.append((reference, title, section_title, status))
     return choices
 
 
 def questions_wizard(
     public: Path,
     course_id: int | None = None,
-    activity_id: int | None = None,
+    activity_id: int | str | None = None,
     questions_path: Path | None = None,
     attachment_paths: tuple[Path, ...] = (),
     *,
@@ -100,8 +101,10 @@ def questions_wizard(
     if activity_id is None:
         print("\nExams:", file=output)
         for index, (candidate_id, title, section_title, status) in enumerate(quizzes, start=1):
+            reference_label = "activity" if isinstance(candidate_id, int) else "assessment"
             print(
-                f"  [{index}] {title} (activity {candidate_id}, section: {section_title}, questions: {status})",
+                f"  [{index}] {title} ({reference_label} {candidate_id}, "
+                f"section: {section_title}, questions: {status})",
                 file=output,
             )
         activity_id = select_number(quizzes, "Select an exam: ", input_func, output)
@@ -164,28 +167,41 @@ def _attachment_sources(paths: tuple[Path, ...]) -> tuple[Path, ...]:
     return tuple(sources)
 
 
-def _find_activity(course: dict[str, Any], activity_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+def _find_activity(
+    course: dict[str, Any],
+    activity_id: int | str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     matches: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    local_reference = str(activity_id) if isinstance(activity_id, str) and not activity_id.isdigit() else ""
+    numeric_reference = int(activity_id) if not local_reference else 0
     for section in course.get("sections", []):
         if not isinstance(section, dict):
             continue
         for item in section.get("items", []):
-            if isinstance(item, dict) and int(item.get("activity_id") or 0) == activity_id:
+            if not isinstance(item, dict):
+                continue
+            if local_reference and str(item.get("assessment_id") or "") == local_reference:
                 matches.append((section, item))
+            elif numeric_reference and int(item.get("activity_id") or 0) == numeric_reference:
+                matches.append((section, item))
+    reference_label = "assessment" if local_reference else "activity"
     if not matches:
-        raise MoodleError(f"activity {activity_id} was not found in course {course.get('id')}; run `ravin scan` first")
+        raise MoodleError(
+            f"{reference_label} {activity_id} was not found in course {course.get('id')}; "
+            "run `ravin scan` first"
+        )
     if len(matches) > 1:
-        raise MoodleError(f"activity {activity_id} appears more than once in the course manifest")
+        raise MoodleError(f"{reference_label} {activity_id} appears more than once in the course manifest")
     section, item = matches[0]
     if item.get("activity_type") != "quiz" and item.get("kind") != "assessment":
-        raise MoodleError(f"activity {activity_id} is not a quiz or assessment")
+        raise MoodleError(f"{reference_label} {activity_id} is not a quiz or assessment")
     return section, item
 
 
 def import_questions(
     public: Path,
     course_id: int,
-    activity_id: int,
+    activity_id: int | str,
     questions_path: Path,
     attachment_paths: tuple[Path, ...] = (),
 ) -> QuestionsImportResult:
@@ -199,12 +215,14 @@ def import_questions(
     if not isinstance(course, dict):
         raise MoodleError(f"course manifest not found: {manifest_path}; run `ravin scan {course_id}` first")
     section, item = _find_activity(course, activity_id)
-    key = str(item.get("key") or "") or _activity_directory_name(
-        item.get("section_number", section.get("number")),
-        item.get("activity_position"),
-        activity_id,
-    )
-    activity_directory = public / "courses" / str(course_id) / "content" / key
+    assessment_status = str(item.get("assessment_status") or "")
+    if assessment_status in {"upcoming", "active", "unavailable"}:
+        raise MoodleError(
+            f"assessment {activity_id} is {assessment_status}; publish questions only after it has ended"
+        )
+    activity_directory = _activity_directory(public, course_id, section, item)
+    key = str(item["key"])
+    bundle_path = str(item["bundle_path"])
     questions_destination = activity_directory / "artifacts" / "questions.fa.md"
     atomic_copy(questions_source, questions_destination)
 
@@ -218,7 +236,7 @@ def import_questions(
     # and its primary attachment immediately. A later remote scan will merge the
     # same bundle through its stable activity ID.
     item["key"] = key
-    item["bundle_path"] = f"content/{key}"
+    item["bundle_path"] = bundle_path
     item["kind"] = "assessment"
     if copied_files:
         primary = activity_directory / "files" / copied_files[0]
@@ -232,11 +250,12 @@ def import_questions(
         current_course = current.get("course")
         if not isinstance(current_course, dict):
             raise MoodleError(f"course manifest changed while importing questions: {manifest_path}")
-        _current_section, current_item = _find_activity(current_course, activity_id)
+        current_section, current_item = _find_activity(current_course, activity_id)
+        _activity_directory(public, course_id, current_section, current_item)
         current_item.update(
             {
                 "key": key,
-                "bundle_path": f"content/{key}",
+                "bundle_path": bundle_path,
                 "kind": "assessment",
             }
         )
