@@ -24,7 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Education",
 ]
-dependencies = ["selenium>=4.46,<5"]
+dependencies = ["selenium>=4.46,<5", "argcomplete>=3.6,<4"]
 
 [project.optional-dependencies]
 pdf = ["playwright>=1.50,<2", "markdown-it-py>=3,<5"]

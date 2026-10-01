@@ -8,6 +8,8 @@ import os
 import sys
 from pathlib import Path
 
+import argcomplete
+
 from .auth import (
     _authenticate_browser_session,
     _browser_session_values,
@@ -67,6 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--browser-executable", type=Path, help="installed browser executable")
     parser.add_argument("--login-timeout", type=int, default=600, help="interactive login timeout")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    completion_parser = subparsers.add_parser("completion", help="print shell tab-completion setup")
+    completion_parser.add_argument("shell", choices=("bash", "zsh"), nargs="?", default="bash")
+    completion_parser.add_argument("--install", action="store_true", help="save setup in your shell startup file")
 
     subparsers.add_parser("login", help="open a browser and refresh the saved LMS session")
 
@@ -302,7 +308,21 @@ def _authenticate(args: argparse.Namespace) -> tuple[MoodleClient, str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    argcomplete.autocomplete(parser)
+    args = parser.parse_args(argv)
+    if args.command == "completion":
+        if args.install:
+            from .completion import install_completion
+            try:
+                startup = install_completion(args.shell)
+            except (OSError, ValueError) as exc:
+                print(f"Could not install completion: {exc}", file=sys.stderr)
+                return 1
+            print(f"Installed {args.shell} completion in {startup}. Open a new shell to enable it.")
+            return 0
+        print(argcomplete.shellcode(["ravin"], shell=args.shell))
+        return 0
     try:
         if args.command == "pdf":
             from .course_pdf import create_course_pdf

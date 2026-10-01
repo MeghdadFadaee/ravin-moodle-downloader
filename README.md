@@ -23,7 +23,36 @@ From the repository root:
 python3 -m pip install .
 ```
 
-This installs the `ravin` command and its browser automation dependency. The equivalent module entry point is `python3 -m ravin`.
+This installs the `ravin` command, browser automation, and shell completion support. The equivalent module entry point is `python3 -m ravin`.
+
+### Shell tab completion
+
+Install completion once for your shell:
+
+```bash
+ravin completion bash --install
+```
+
+For Zsh (the default shell on current macOS):
+
+```zsh
+ravin completion zsh --install
+```
+
+Open a new terminal afterward. The command saves a managed setup block in
+`~/.bashrc` (`~/.bash_profile` on macOS) or `~/.zshrc` (honoring `ZDOTDIR`).
+Running it again updates the block without duplicating it or replacing other
+settings. It uses the Python environment where you ran the setup, so completion
+also loads before you activate that environment. Rerun setup if you move or
+replace the environment. Package installation itself does not edit shell settings.
+
+To enable completion only in the current session, use
+`eval "$(ravin completion bash)"`, or `eval "$(ravin completion zsh)"` in Zsh
+with `compinit` initialized.
+
+Press Tab to complete commands, options, choice values such as
+`ravin transcribe --device`, and file paths. Completion uses the current command
+definitions and does not log in or contact the LMS.
 
 Whisper and PyTorch are large, platform-specific dependencies, so install them only on the machine that will transcribe media:
 
@@ -468,6 +497,7 @@ When an older generated `library/courses.json` exists and `public/` has no manif
 ```text
 ravin login
 ravin scan [COURSE_ID ...] [--offline] [--json] [--public PATH]
+ravin completion [bash|zsh] [--install]
 ravin download COURSE_ID [--overwrite] [--retries N] [--json] [--public PATH]
 ravin transcribe [COURSE_ID ...] [--model MODEL] [--device DEVICE] [--language LANGUAGE]
 ravin summarize [COURSE_ID ...] [--model MODEL] [--retries N] [--timeout SECONDS]
