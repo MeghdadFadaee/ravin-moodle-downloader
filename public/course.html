@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="Browse the resources in a downloaded course.">
   <title>Course · Learning Library</title>
-  <link rel="stylesheet" href="assets/styles.css">
-  <script src="assets/app.js" defer></script>
+  <link rel="stylesheet" href="assets/styles.css?v=course-pdf-3">
+  <script src="assets/app.js?v=course-pdf-3" defer></script>
 </head>
 <body data-page="course">
   <header class="topbar">
@@ -41,6 +41,12 @@
         <div><strong id="courseDownloaded">0 of 0</strong><span>files available offline</span></div>
       </div>
     </section>
+
+    <a class="study-guide" id="coursePdf" hidden target="_blank" rel="noopener" aria-labelledby="guideTitle">
+      <span class="guide-cover" aria-hidden="true"><span class="guide-cover-label">COURSE<br>NOTES</span><span class="guide-cover-lines"></span><span class="guide-cover-format">PDF</span></span>
+      <span class="guide-copy"><span class="guide-eyebrow">YOUR STUDY COMPANION</span><strong id="guideTitle">The course, collected.</strong><span class="guide-description">Your lesson summaries in one beautifully readable guide.</span><span class="guide-meta" id="guideMeta"></span></span>
+      <span class="guide-action">Open study guide <span aria-hidden="true">↗</span></span>
+    </a>
 
     <section class="course-toolbar" aria-label="Resource controls">
       <label class="search-box resource-search">

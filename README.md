@@ -382,6 +382,33 @@ ravin summarize 44 --no-keep-awake
 
 Set `CODEX_SUMMARY_MODEL` in `.env` to make a model override persistent. Leave it empty to use the model configured by Codex CLI.
 
+## Course summaries PDF
+
+Install PDF support once, then create a PDF for a course without an LMS login:
+
+```bash
+pip install 'ravin-moodle-downloader[pdf]'
+python -m playwright install chromium
+ravin pdf COURSE_ID
+```
+
+The command combines all non-empty local lesson summaries in chapter and lesson order,
+preserving Markdown headings, lists, code, and tables. It embeds Vazirmatn Regular and
+Bold and uses Chromium's Unicode shaping and bidirectional layout for Persian/Arabic
+letters, Latin text, and Persian, Arabic, and Western digits. Digit characters are
+preserved as written. Raw HTML and external images are disabled.
+
+The PDF is saved to `public/courses/COURSE_ID/artifacts/summaries.fa.pdf` and linked
+on the Library course card and course page immediately. Use `--public PATH` for
+another library root or `--json` for machine-readable results. Re-running replaces
+the PDF atomically. Scans mark its link outdated when summaries or their titles
+change; re-run `ravin pdf COURSE_ID` to refresh it. Courses without summaries report
+an error instead of producing an empty PDF. Only available summaries are included;
+generate missing summaries with `ravin summarize COURSE_ID` first.
+
+Bundled Vazirmatn fonts are distributed under the SIL Open Font License in
+`src/ravin/fonts/OFL.txt`.
+
 ## Static learning library
 
 The web interface is already present in the tracked `public/` directory. Generate or refresh its private data, then serve it:

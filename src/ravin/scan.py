@@ -361,6 +361,8 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
             },
         }
     )
+    from .course_pdf import summary_pdf_artifact
+    course["summary_pdf"] = summary_pdf_artifact(public, course)
     return course
 
 
@@ -369,7 +371,7 @@ def _course_summary(course: dict[str, Any]) -> dict[str, Any]:
         key: course.get(key)
         for key in (
             "id", "fullname", "shortname", "source_url", "section_count", "activity_count",
-            "record_count", "file_count", "downloaded_count", "downloaded_bytes", "type_counts", "states",
+            "record_count", "file_count", "downloaded_count", "downloaded_bytes", "type_counts", "states", "summary_pdf",
         )
     } | {"manifest_url": f"courses/{course.get('id')}/manifest.json"}
 

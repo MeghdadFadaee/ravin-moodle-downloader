@@ -27,6 +27,7 @@ classifiers = [
 dependencies = ["selenium>=4.46,<5"]
 
 [project.optional-dependencies]
+pdf = ["playwright>=1.50,<2", "markdown-it-py>=3,<5"]
 transcribe = [
     "openai-whisper==20250625",
     "torch==2.13.0",
@@ -40,3 +41,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ravin = ["fonts/*.ttf", "fonts/OFL.txt"]

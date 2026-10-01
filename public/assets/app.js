@@ -211,6 +211,16 @@ function courseCard(course) {
   link.href = `course.html?id=${encodeURIComponent(course.id)}`;
   link.innerHTML = `Open course <span aria-hidden="true">→</span>`;
   bottom.append(track, progress, link);
+  if (course.summary_pdf?.url) {
+    const pdf = document.createElement("a");
+    pdf.className = "guide-card-link";
+    pdf.href = course.summary_pdf.url;
+    pdf.target = "_blank";
+    pdf.rel = "noopener";
+    pdf.innerHTML = '<span class="guide-mini-icon" aria-hidden="true">▤</span><span><strong>Study guide</strong><small></small></span><span aria-hidden="true">↗</span>';
+    pdf.querySelector("small").textContent = `${course.summary_pdf.summary_count || 0} lesson summaries · PDF${course.summary_pdf.state === "stale" ? " · Outdated" : ""}`;
+    bottom.append(pdf);
+  }
   card.append(top, title, meta, states, bottom);
   return card;
 }
@@ -536,6 +546,12 @@ function renderCourse() {
   setText("generatedAt", `Updated ${new Date(state.catalog.generated_at).toLocaleString()}`);
   byId("courseProgress").style.setProperty("--progress", percent);
   byId("courseSource").href = course.source_url;
+  const pdf = byId("coursePdf");
+  pdf.hidden = !course.summary_pdf?.url;
+  if (course.summary_pdf?.url) {
+    pdf.href = course.summary_pdf.url;
+    setText("guideMeta", `${course.summary_pdf.summary_count || 0} lesson summaries · Persian · PDF${course.summary_pdf.state === "stale" ? " · Update available: regenerate your guide" : ""}`);
+  }
   byId("resourceSearch").addEventListener("input", (event) => {
     state.query = normalized(event.target.value);
     renderResources();

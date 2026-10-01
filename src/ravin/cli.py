@@ -70,6 +70,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("login", help="open a browser and refresh the saved LMS session")
 
+    pdf_parser = subparsers.add_parser("pdf", help="create a course PDF from its local summaries")
+    pdf_parser.add_argument("course_id", type=int)
+    pdf_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
+    pdf_parser.add_argument("--json", action="store_true", help="print PDF details as JSON")
+
     scan_parser = subparsers.add_parser("scan", help="scan LMS courses and reconcile local learning state")
     scan_parser.add_argument("course_ids", nargs="*", type=int, help="optional course IDs; defaults to all courses")
     scan_parser.add_argument("--public", type=Path, default=Path("public"), help="public web root")
@@ -299,6 +304,13 @@ def _authenticate(args: argparse.Namespace) -> tuple[MoodleClient, str]:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "pdf":
+            from .course_pdf import create_course_pdf
+            result = create_course_pdf(args.public, args.course_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2) if args.json else
+                  f"Created PDF from {result['summary_count']} summaries: {result['path']}")
+            return 0
+
         if args.command == "serve":
             _serve_library(args.public, args.host, args.port, args.open)
             return 0
