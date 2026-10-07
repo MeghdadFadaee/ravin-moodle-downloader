@@ -149,6 +149,12 @@ class ParserTests(unittest.TestCase):
 
     def test_browser_login_captures_user_agent_and_cookies(self):
         class FakeLaunchLink:
+            def __init__(self, driver):
+                self.driver = driver
+
+            def click(self):
+                self.driver.current_url = "https://training.example/my/"
+
             def is_displayed(self):
                 return True
 
@@ -159,6 +165,8 @@ class ParserTests(unittest.TestCase):
 
         class FakeDriver:
             current_url = "about:blank"
+            window_handles = ["main"]
+            current_window_handle = "main"
 
             def get(self, url):
                 if "/moodle/login_student_user/" in url:
@@ -173,7 +181,7 @@ class ParserTests(unittest.TestCase):
 
             def find_elements(self, _by, selector):
                 if "login_student_user" in selector and self.current_url == "https://lms.example/":
-                    return [FakeLaunchLink()]
+                    return [FakeLaunchLink(self)]
                 return []
 
             def get_cookies(self):
@@ -204,6 +212,7 @@ class ParserTests(unittest.TestCase):
         fake_common = types.ModuleType("selenium.common")
         fake_exceptions = types.ModuleType("selenium.common.exceptions")
         fake_exceptions.WebDriverException = RuntimeError
+        fake_exceptions.NoSuchWindowException = RuntimeError
         fake_webdriver_module = types.ModuleType("selenium.webdriver")
         fake_webdriver_common = types.ModuleType("selenium.webdriver.common")
         fake_by = types.ModuleType("selenium.webdriver.common.by")

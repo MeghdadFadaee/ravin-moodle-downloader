@@ -17,6 +17,10 @@ from .constants import DEFAULT_RAVIN_LOGIN_URL, ENV_KEYS
 from .models import MoodleError
 
 
+class _InvalidSSOKey(MoodleError):
+    """The portal transfer failed before establishing a Moodle session."""
+
+
 def _env_value(args: argparse.Namespace, key: str) -> str:
     return os.environ.get(key) or args.env_values.get(key, "")
 
@@ -163,6 +167,169 @@ def _browser_login_url(args: argparse.Namespace) -> str:
     return urllib.parse.urljoin(args.site.rstrip("/") + "/", "my/courses.php")
 
 
+def _authenticated_browser_session(driver, site: str) -> tuple[str, str] | None:
+    """Capture only a signed-in Moodle page on the configured site."""
+    location = urllib.parse.urlsplit(driver.current_url)
+    target = urllib.parse.urlsplit(site)
+    if (location.scheme, location.netloc.casefold()) != (target.scheme, target.netloc.casefold()):
+        return None
+    if "/login/" in location.path or location.path.endswith("/auth/userkey/login.php"):
+        return None
+    logged_in = driver.execute_script(
+        """return Boolean(
+            window.M && M.cfg && Number(M.cfg.userId) > 0 && M.cfg.sesskey
+        );"""
+    )
+    if not logged_in:
+        return None
+    cookie_header = "; ".join(
+        f"{cookie['name']}={cookie['value']}"
+        for cookie in driver.get_cookies()
+        if cookie.get("name") and cookie.get("value")
+    )
+    if not cookie_header:
+        raise MoodleError("browser login succeeded, but no site cookies were available")
+    return str(driver.execute_script("return navigator.userAgent;")), cookie_header
+
+
+def _select_login_tab(driver, known_handles: set[str]) -> set[str]:
+    """Follow a newly opened login tab, or recover when the active tab closes."""
+    from selenium.common.exceptions import NoSuchWindowException
+
+    handles = driver.window_handles
+    if not handles:
+        raise MoodleError("the authentication browser was closed before login finished")
+    new_handles = [handle for handle in handles if handle not in known_handles]
+    if new_handles:
+        driver.switch_to.window(new_handles[-1])
+    else:
+        try:
+            current = driver.current_window_handle
+        except NoSuchWindowException:
+            current = None
+        if current not in handles:
+            driver.switch_to.window(handles[-1])
+    return set(handles)
+
+
+def _launch_moodle_from_portal(driver, login_url: str, by) -> bool:
+    """Activate the actual portal link so browser navigation preserves its context."""
+    links = driver.find_elements(by.CSS_SELECTOR, 'a[href*="/moodle/login_student_user/"]')
+    candidates = [
+        link for link in links
+        if urllib.parse.urlsplit(link.get_attribute("href") or "").hostname
+        == urllib.parse.urlsplit(login_url).hostname
+    ]
+    if not candidates:
+        return False
+    visible = next((link for link in candidates if link.is_displayed()), None)
+    if visible is not None:
+        visible.click()
+    else:
+        # Closed dropdowns still contain the real link and its event handlers.
+        driver.execute_script("arguments[0].click();", candidates[0])
+    return True
+
+
+def _capture_chromium_session(args: argparse.Namespace, portal_cookies=()) -> tuple[str, str]:
+    """Use a persistent Chromium context when Firefox's portal transfer fails."""
+    try:
+        from playwright.sync_api import sync_playwright, Error as PlaywrightError
+    except ImportError as exc:
+        raise MoodleError("Chromium login requires Playwright; reinstall the updated package") from exc
+
+    profile = args.browser_profile.expanduser().resolve() / "chromium"
+    profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+    deadline = time.monotonic() + max(args.login_timeout, 30)
+    login_url = _browser_login_url(args)
+    target = urllib.parse.urlsplit(args.site)
+    saved = _browser_session_values(args)
+    # A browser restart may discard session-only cookies. Rehydrate only a
+    # previous Chromium session, using its matching User-Agent.
+    chromium_saved = saved if saved and "Chrome/" in saved[0] and not portal_cookies else None
+    with sync_playwright() as playwright:
+        if not Path(playwright.chromium.executable_path).is_file():
+            raise MoodleError("Chromium is not installed. Run `python -m playwright install chromium` and retry login")
+        try:
+            context = playwright.chromium.launch_persistent_context(
+                str(profile), headless=False,
+                **({"user_agent": chromium_saved[0]} if chromium_saved else {}),
+            )
+            try:
+                if chromium_saved:
+                    context.add_cookies([
+                        {"name": name.strip(), "value": value, "url": args.site.rstrip("/") + "/", "secure": target.scheme == "https"}
+                        for pair in chromium_saved[1].split(";")
+                        for name, separator, value in [pair.strip().partition("=")]
+                        if separator and name.strip()
+                    ])
+                if portal_cookies:
+                    # Keep the authorized portal session when changing engines.
+                    # Analytics cookies are unnecessary and can have invalid flags.
+                    cookies = []
+                    for cookie in portal_cookies:
+                        if cookie["name"].startswith(("_ga", "_gid", "_gat")):
+                            continue
+                        copied = {key: cookie[key] for key in ("name", "value", "domain", "path")}
+                        copied.update(secure=cookie.get("secure", False), httpOnly=cookie.get("httpOnly", False))
+                        if cookie.get("expiry"):
+                            copied["expires"] = cookie["expiry"]
+                        cookies.append(copied)
+                    context.add_cookies(cookies)
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(args.site.rstrip("/") + "/my/courses.php")
+                launched = False
+                opened_portal = False
+                known_pages = set(context.pages)
+                while time.monotonic() < deadline:
+                    pages = [item for item in context.pages if not item.is_closed()]
+                    if not pages:
+                        raise MoodleError("the authentication browser was closed before login finished")
+                    new_pages = [item for item in pages if item not in known_pages]
+                    if new_pages or page.is_closed():
+                        page = (new_pages or pages)[-1]
+                    known_pages = set(pages)
+                    location = urllib.parse.urlsplit(page.url)
+                    if (location.scheme, location.netloc.casefold()) == (target.scheme, target.netloc.casefold()):
+                        if page.locator('a[href*="/error/moodle/invalidkey"]').count():
+                            raise _InvalidSSOKey("Moodle rejected the portal sign-in key in Chromium too; no new session was saved")
+                        if "/login/" not in location.path and page.evaluate(
+                            "Boolean(window.M && M.cfg && Number(M.cfg.userId) > 0 && M.cfg.sesskey)"
+                        ):
+                            cookie_header = "; ".join(
+                                f"{cookie['name']}={cookie['value']}" for cookie in context.cookies(page.url)
+                                if cookie.get("name") and cookie.get("value")
+                            )
+                            if not cookie_header:
+                                raise MoodleError("Chromium login succeeded, but no cookies were available")
+                            return page.evaluate("navigator.userAgent"), cookie_header
+                    if not opened_portal:
+                        page.goto(login_url)
+                        opened_portal = True
+                        continue
+                    if not launched and location.hostname == urllib.parse.urlsplit(login_url).hostname:
+                        links = page.locator('a[href*="/moodle/login_student_user/"]').all()
+                        links = [link for link in links if urllib.parse.urlsplit(
+                            urllib.parse.urljoin(page.url, link.get_attribute("href") or "")
+                        ).hostname == location.hostname]
+                        if links:
+                            visible = next((link for link in links if link.is_visible()), None)
+                            if visible is not None:
+                                visible.click()
+                            else:
+                                links[0].evaluate("element => element.click()")
+                            launched = True
+                            print("Opening the Moodle course portal in Chromium...", file=sys.stderr)
+                            continue
+                    time.sleep(1)
+                raise MoodleError(f"Chromium login did not finish within {max(args.login_timeout, 30)} seconds")
+            finally:
+                context.close()
+        except PlaywrightError as exc:
+            # Browser exceptions can embed the one-time login URL.
+            raise MoodleError("Chromium authentication could not complete; check the browser or retry login") from None
+
+
 def _capture_browser_session(args: argparse.Namespace) -> tuple[str, str]:
     """Open an installed browser through Selenium and capture its authenticated session."""
     try:
@@ -188,6 +355,10 @@ def _capture_browser_session(args: argparse.Namespace) -> tuple[str, str]:
         os.chmod(profile, 0o700)
     except OSError:
         pass
+
+    if not args.browser_executable and (profile / "chromium" / "Local State").is_file():
+        print("Opening the previously verified Chromium login profile...", file=sys.stderr)
+        return _capture_chromium_session(args)
 
     browser_name = executable.name.casefold()
     try:
@@ -223,53 +394,74 @@ def _capture_browser_session(args: argparse.Namespace) -> tuple[str, str]:
     print(f"Opening {executable.name} for LMS authentication...", file=sys.stderr)
     print("Complete Cloudflare or LMS login in that window if requested.", file=sys.stderr)
     try:
+        # A persistent profile may already hold a valid Moodle session. Reuse it
+        # before issuing another single-sign-on launch from the account portal.
+        driver.get(args.site.rstrip("/") + "/my/courses.php")
+        session = _authenticated_browser_session(driver, args.site)
+        if session is not None:
+            return session
         driver.get(login_url)
+        known_handles = set(driver.window_handles)
+        launched_moodle = False
         submitted_credentials = False
         credential_attempts = 0
+        captcha_notice_shown = False
         last_location = ""
         while time.monotonic() < deadline:
+            known_handles = _select_login_tab(driver, known_handles)
             current_location = urllib.parse.urlsplit(driver.current_url)._replace(query="", fragment="").geturl()
             if current_location != last_location:
                 print(f"Browser is at {current_location}", file=sys.stderr)
                 last_location = current_location
             try:
-                logged_in = bool(
-                    driver.execute_script(
-                        """return Boolean(
-                            window.M && M.cfg && Number(M.cfg.userId) > 0 &&
-                            document.querySelector('a[href*="/login/logout.php"]')
-                        );"""
-                    )
-                )
+                session = _authenticated_browser_session(driver, args.site)
             except WebDriverException:
-                logged_in = False
-            if logged_in:
-                cookies = driver.get_cookies()
-                user_agent = str(driver.execute_script("return navigator.userAgent;"))
-                cookie_header = "; ".join(
-                    f"{cookie['name']}={cookie['value']}"
-                    for cookie in cookies
-                    if cookie.get("name") and cookie.get("value")
+                session = None
+            if session is not None:
+                return session
+
+            if driver.find_elements(By.CSS_SELECTOR, 'a[href*="/error/moodle/invalidkey"]'):
+                raise _InvalidSSOKey(
+                    "Moodle rejected the portal's sign-in key (invalidkey). "
+                    "The browser did not establish a session; no new session was saved. "
+                    "The account portal's single-sign-on may need attention."
                 )
-                if not cookie_header:
-                    raise MoodleError("browser login succeeded, but no site cookies were available")
-                return user_agent, cookie_header
+
+            if launched_moodle:
+                # A click may open its destination asynchronously. Do not issue
+                # another launch or submit the portal form during that transfer.
+                time.sleep(1)
+                continue
+
+            location = urllib.parse.urlsplit(driver.current_url)
+            allowed_origins = {
+                (parsed.scheme, parsed.netloc.casefold())
+                for parsed in (urllib.parse.urlsplit(args.site), urllib.parse.urlsplit(login_url))
+            }
+            if (location.scheme, location.netloc.casefold()) not in allowed_origins:
+                time.sleep(1)
+                continue
 
             # Ravin's account portal owns the login. Its Moodle launch link creates
             # the session on training.ravinacademy.com and redirects there.
-            launch_links = driver.find_elements(
-                By.CSS_SELECTOR,
-                'a[href*="/moodle/login_student_user/"]',
-            )
-            launch_urls = [
-                element.get_attribute("href")
-                for element in launch_links
-                if element.is_displayed() and element.get_attribute("href")
-            ]
-            if launch_urls:
+            if not launched_moodle and _launch_moodle_from_portal(driver, login_url, By):
                 print("LMS login accepted; opening the Moodle course portal.", file=sys.stderr)
-                driver.get(launch_urls[0])
+                launched_moodle = True
                 submitted_credentials = False
+                continue
+
+            # The portal now requires a human-entered CAPTCHA. Leave the form
+            # untouched rather than submitting incomplete credentials repeatedly.
+            captcha_controls = driver.find_elements(
+                By.CSS_SELECTOR,
+                'input[name="captcha_1"], input[name="g-recaptcha-response"], '
+                '.g-recaptcha, .h-captcha, iframe[src*="recaptcha"], iframe[src*="hcaptcha"]',
+            )
+            if any(element.is_displayed() for element in captcha_controls):
+                if not captcha_notice_shown:
+                    print("CAPTCHA detected; complete login in the browser window.", file=sys.stderr)
+                    captcha_notice_shown = True
+                time.sleep(1)
                 continue
 
             if submitted_credentials:
@@ -364,6 +556,13 @@ def _capture_browser_session(args: argparse.Namespace) -> tuple[str, str]:
                     print("Submitted the stored LMS credentials.", file=sys.stderr)
             time.sleep(1)
         raise MoodleError(f"browser login did not finish within {max(args.login_timeout, 30)} seconds")
+    except _InvalidSSOKey:
+        if not ("firefox" in browser_name or "zen" in browser_name):
+            raise
+        print("Firefox/Zen rejected the portal transfer; switching to Chromium.", file=sys.stderr)
+        driver.get(login_url)
+        portal_cookies = driver.get_cookies()
+        return _capture_chromium_session(args, portal_cookies)
     except WebDriverException as exc:
         raise MoodleError(f"browser authentication failed: {exc}") from exc
     finally:

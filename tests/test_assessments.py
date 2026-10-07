@@ -130,6 +130,35 @@ class CourseAssessmentTests(unittest.TestCase):
         self.assertEqual(item["bundle_path"], "assessments/final-exam")
         self.assertEqual(item["state"]["questions"], "complete")
 
+    def test_hidden_linked_quiz_keeps_local_exam_and_reconnects_when_visible(self) -> None:
+        course = self.write_course(53)
+        self.write_overlay(course, activity_id=6126)
+        questions = course / "assessments" / "final-exam" / "artifacts" / "questions.fa.md"
+        questions.parent.mkdir(parents=True)
+        questions.write_text("# Preserved exam", encoding="utf-8")
+        scan_offline(self.public, [53])
+        scan_offline(self.public, [53])
+        manifest_path = course / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        exam = manifest["course"]["sections"][-1]["items"][0]
+        self.assertEqual(exam["linked_activity_id"], 6126)
+        self.assertIsNone(exam["activity_id"])
+        self.assertEqual(exam["state"]["questions"], "complete")
+        self.assertEqual(exam["bundle_path"], "assessments/final-exam")
+        manifest["course"]["sections"][0]["items"].append({
+            "activity_id": 6126, "activity_position": 1, "activity_type": "quiz",
+            "title": "Visible quiz", "kind": "quiz", "filename": "",
+        })
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        scan_offline(self.public, [53])
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        exams = [item for section in manifest["course"]["sections"] for item in section["items"]
+                 if item.get("assessment_id") == "final-exam"]
+        self.assertEqual(len(exams), 1)
+        self.assertEqual(exams[0]["activity_id"], 6126)
+        self.assertEqual(exams[0]["state"]["questions"], "complete")
+        self.assertEqual(questions.read_text(encoding="utf-8"), "# Preserved exam")
+
     def test_active_exam_is_visible_but_cannot_publish_answers(self) -> None:
         course = self.write_course(56)
         self.write_overlay(course, status="active")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ravin-moodle-downloader"
-version = "0.16.0"
+version = "0.16.3"
 description = "Scan, download, transcribe, summarize, and organize authorized Moodle course materials"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,7 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Education",
 ]
-dependencies = ["selenium>=4.46,<5", "argcomplete>=3.6,<4"]
+dependencies = ["selenium>=4.46,<5", "argcomplete>=3.6,<4", "playwright>=1.50,<2"]
 
 [project.optional-dependencies]
 pdf = ["playwright>=1.50,<2", "markdown-it-py>=3,<5"]

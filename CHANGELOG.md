@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented here.
 
+## 0.16.3 - 2026-10-08
+
+- Recover from Ravin single-sign-on rejecting Firefox/Zen keys by transferring the authorized portal session to a persistent Chromium browser.
+- Reuse the successful Chromium profile on subsequent logins, without repeating the failed Firefox transfer.
+- Include Playwright with the base installation so Chromium does not depend on a downloadable ChromeDriver.
+- Preserve linked local exams and their artifacts when Moodle hides or removes the linked quiz; reconnect when it reappears.
+- Verify the installed login command against the live LMS and scan all enrolled courses.
+
+## 0.16.2 - 2026-10-08
+
+- Reuse an authenticated persistent Moodle browser profile before launching portal single sign-on.
+- Activate the portal's actual course link once, preserving normal browser navigation and event handlers.
+- Follow newly opened login tabs and report invalid sign-in keys without replaying the transfer.
+- Keep credential submission limited to the configured login and Moodle origins.
+
+## 0.16.1 - 2026-10-08
+
+- Recognize authenticated Moodle sessions in the updated Ravin theme without a static logout link.
+- Follow Moodle launch links inside closed portal dropdowns and wait for manual CAPTCHA login.
+- Reject guest sessions, malformed course-list responses, expired course/activity pages, and unrecognized course layouts before writing scan results.
+- Fix error reporting for rejected web logins.
+
 ## 0.16.0 - 2026-08-30
 
 - Treat Moodle activity IDs as stable local bundle identities while retaining sortable `SECTION--POSITION--ID` paths.

@@ -2,6 +2,7 @@
 
 import http.client
 import http.cookiejar
+import html
 import json
 import mimetypes
 import re
@@ -233,6 +234,8 @@ class MoodleClient:
             self.user_id = int(config["userId"])
         if not self.sesskey:
             raise MoodleError("the page opened, but Moodle's session key was not found")
+        if not self.user_id or self.user_id <= 0:
+            raise MoodleError("the browser session is not logged in as a Moodle user")
 
     def api_call(self, function: str, **params: Any) -> Any:
         if not self.token:
@@ -295,7 +298,9 @@ class MoodleClient:
                     "requiredfields": ["id", "fullname", "shortname", "visible", "enddate"],
                 },
             )
-            raw_courses = data.get("courses", []) if isinstance(data, dict) else []
+            if not isinstance(data, dict) or not isinstance(data.get("courses"), list):
+                raise MoodleError("Moodle returned an unexpected enrolled-course response")
+            raw_courses = data["courses"]
             courses = [
                 Course(int(item["id"]), str(item.get("fullname") or item.get("displayname") or item["id"]), str(item.get("shortname") or ""))
                 for item in raw_courses
@@ -346,9 +351,7 @@ class MoodleClient:
 
     def _list_files_web(self, course_id: int) -> list[FileItem]:
         page, final_url, _ = self._read_text(f"/course/view.php?id={course_id}")
-        structure_parser = _CourseStructureParser(final_url)
-        structure_parser.feed(page)
-        structure = structure_parser.result()
+        structure = self._parse_course_structure(page, final_url, course_id)
         self._course_structure_cache[course_id] = structure
         activity_by_url: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
         for section in structure:
@@ -392,6 +395,7 @@ class MoodleClient:
             if not (content_type.startswith("text/") or content_type in {"application/xhtml+xml", "application/xml"}):
                 files.append(self._web_file_item(course_id, "Course files", activity, module_final_url, metadata))
                 continue
+            self._validate_web_page(module_page, module_final_url)
             module_parser = _LinkParser(module_final_url)
             module_parser.feed(module_page)
             candidates = list(module_parser.media)
@@ -432,11 +436,31 @@ class MoodleClient:
         if cached is not None:
             return cached
         page, final_url, _ = self._read_text(f"/course/view.php?id={course_id}")
+        structure = self._parse_course_structure(page, final_url, course_id)
+        self._course_structure_cache[course_id] = structure
+        return structure
+
+    def _parse_course_structure(self, page: str, final_url: str, course_id: int) -> list[dict[str, Any]]:
+        self._validate_web_page(page, final_url)
         parser = _CourseStructureParser(final_url)
         parser.feed(page)
         structure = parser.result()
-        self._course_structure_cache[course_id] = structure
+        if not structure:
+            raise MoodleError(
+                f"course {course_id} exposed no readable sections; check access and the site's course format"
+            )
         return structure
+
+    @staticmethod
+    def _validate_web_page(page: str, final_url: str) -> None:
+        if _is_cloudflare_challenge(page):
+            raise MoodleError("Cloudflare rejected the LMS page; run `ravin login` again")
+        forms = _FormParser()
+        forms.feed(page)
+        if "/login/" in urllib.parse.urlsplit(final_url).path or any(
+            "password" in form["inputs"] for form in forms.forms
+        ):
+            raise MoodleError("the session expired while reading the LMS; run `ravin login` again")
 
     def download(
         self,

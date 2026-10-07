@@ -99,6 +99,8 @@ def merge_assessments(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 raise MoodleError(
                     f"invalid activity ID for assessment {assessment['id']}: {activity_id!r}"
                 ) from exc
+            if resolved_activity_id <= 0:
+                raise MoodleError(f"invalid activity ID for assessment {assessment['id']}: {activity_id!r}")
             for section in sections:
                 for item in section.get("items", []):
                     if int(item.get("activity_id") or 0) == resolved_activity_id:
@@ -106,11 +108,9 @@ def merge_assessments(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                         break
                 if linked is not None:
                     break
-            if linked is None:
-                raise MoodleError(
-                    f"assessment {assessment['id']} links to missing activity {resolved_activity_id} "
-                    f"in course {course_id}"
-                )
+            # A linked quiz can disappear from the visible LMS tree. Its local
+            # assessment and stable artifact bundle must survive that scan;
+            # retain the desired link so it reconnects if the quiz reappears.
 
         common = {
             "assessment_id": assessment["id"],
@@ -134,6 +134,7 @@ def merge_assessments(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 "section_id": None,
                 "section_number": None,
                 "activity_id": None,
+                "linked_activity_id": int(activity_id) if activity_id is not None else None,
                 "activity_position": position,
                 "activity_type": "assessment",
                 "title": assessment["title"],

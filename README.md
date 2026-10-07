@@ -118,6 +118,25 @@ ravin scan --offline
 
 `ravin login` opens a persistent, Git-ignored browser profile. For Ravin Academy it begins at `https://lms.ravinacademy.com/`, follows the Moodle launch into `training.ravinacademy.com`, and stores the resulting User-Agent and cookies in `.env`.
 
+If the account portal shows a CAPTCHA, complete the login in that browser window.
+The command waits for you and does not submit the CAPTCHA form automatically.
+It first checks the persistent browser's existing Moodle session. If login is
+needed, it clicks the dashboard's course or **Offline class** link once (including
+links in closed dropdowns), follows a newly opened login tab, and recognizes the
+new Moodle theme without requiring a logout link. If the portal rejects a sign-in
+key, the command does not replay that key or repeatedly launch single sign-on.
+If Ravin rejects a Firefox/Zen transfer, the command switches to Chromium with the
+existing authorized portal session. Later logins reuse that separate persistent
+Chromium profile. Install the Chromium browser once if it is not already available:
+
+```bash
+python -m playwright install chromium
+```
+
+Logging in through Codex's internal browser does not refresh the separate session
+used by this command. After a site update or rejected session, run `ravin login`
+and then `ravin scan` to scan all enrolled courses.
+
 Missing credentials are requested interactively. You can also copy [`.env.example`](.env.example) and fill it yourself:
 
 ```dotenv
