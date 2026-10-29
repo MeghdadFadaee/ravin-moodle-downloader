@@ -254,6 +254,8 @@ def _reconcile_course(public: Path, course: dict[str, Any]) -> dict[str, Any]:
     for section in course.get("sections", []):
         for item in section.get("items", []):
             records += 1
+            if item.get("activity_type") == "quiz":
+                item["kind"] = "assessment"
             activity_directory = _activity_directory(public, course_id, section, item)
             download_state, local_path = _download_state(activity_directory, item)
             media_applicable = item.get("kind") in {"video", "audio"}

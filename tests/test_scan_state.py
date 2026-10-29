@@ -9,7 +9,63 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ravin.scan import scan_offline
+from ravin.scan import scan_offline, scan_remote
+from ravin.catalog import _build_library_catalog
+from ravin.models import Course
+
+
+class QuizVisibilityTests(unittest.TestCase):
+    def test_remote_scan_includes_quizzes_without_local_artifacts_as_assessments(self):
+        class Client:
+            site = "https://training.example"
+
+            def list_courses(self):
+                return [Course(56, "MCSA", "MCSA")]
+
+            def list_files(self, course_id):
+                return []
+
+            def course_structure(self, course_id):
+                return [{"number": 14, "name": "Practices", "activities": [
+                    {"id": activity_id, "position": position, "type": "quiz", "name": f"Practice {position}"}
+                    for position, activity_id in enumerate((6142, 6151, 6238), 1)
+                ]}]
+
+        with tempfile.TemporaryDirectory() as directory:
+            public = Path(directory)
+            raw = _build_library_catalog(Client(), public)
+            self.assertEqual([item["kind"] for item in raw["courses"][0]["sections"][0]["items"]],
+                             ["assessment"] * 3)
+            scan_remote(Client(), public)
+            manifest = json.loads((public / "courses/56/manifest.json").read_text())
+            items = manifest["course"]["sections"][0]["items"]
+            self.assertEqual([item["activity_id"] for item in items], [6142, 6151, 6238])
+            self.assertTrue(all(item["kind"] == "assessment" for item in items))
+            self.assertTrue(all(item["state"]["questions"] == "missing" for item in items))
+
+    def test_offline_scan_repairs_legacy_quiz_kind_and_preserves_questions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            public = Path(directory)
+            root = public / "courses/56"
+            artifact = root / "content/014--001--6142/artifacts/questions.fa.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("# Practice three\n")
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(json.dumps({"course": {
+                "id": 56, "fullname": "MCSA", "sections": [{"number": 14, "items": [
+                    {"activity_id": activity_id, "activity_position": position,
+                     "activity_type": "quiz", "kind": "quiz", "title": f"Practice {position}"}
+                    for position, activity_id in enumerate((6142, 6151, 6238), 1)
+                ]}]
+            }}))
+            scan_offline(public, [56])
+            course = json.loads(manifest_path.read_text())["course"]
+            items = course["sections"][0]["items"]
+            self.assertTrue(all(item["kind"] == "assessment" for item in items))
+            self.assertEqual([item["state"]["questions"] for item in items],
+                             ["complete", "missing", "missing"])
+            self.assertEqual(artifact.read_text(), "# Practice three\n")
+            self.assertEqual(course["states"]["assessments"], {"total": 3, "complete": 1, "missing": 2})
 
 
 class PortableArtifactStateTests(unittest.TestCase):

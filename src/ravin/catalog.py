@@ -257,7 +257,7 @@ def _build_library_catalog(
                 current_path = local_directory / str(current_relative) if local_directory and current_relative else None
                 local_path = current_path if current_path and current_path.is_file() else (local_files[0] if local_files else None)
                 local_bytes = local_path.stat().st_size if local_path else 0
-                if activity_type == "quiz" and local_activity:
+                if activity_type == "quiz":
                     local_kind = "assessment"
                 elif activity_type in LIVE_CLASS_MODULES and local_path:
                     local_kind = _media_kind(local_path.name, mimetypes.guess_type(local_path.name)[0] or "")

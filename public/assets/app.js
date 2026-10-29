@@ -261,6 +261,7 @@ function resourceMatches(item) {
   if (state.query && !haystack.includes(state.query)) return false;
   if (state.filter === "all") return true;
   if (state.filter === "downloaded" || state.filter === "missing") return item.status === state.filter;
+  if (state.filter === "assessment") return item.kind === "assessment" || item.activity_type === "quiz";
   return item.kind === state.filter;
 }
 
