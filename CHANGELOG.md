@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented here.
 
+## 0.16.4 - 2026-11-22
+
+- Discover Moodle resources that redirect to a download by reading their response headers. Use the advertised filename, media type, and size when available.
+- Retry interrupted page reads and report persistent network failures before publishing an incomplete scan or attempting a browser-session refresh.
+- Show Moodle quizzes in the library's Exams filter before local questions or attachments are added, including quizzes in older manifests.
+
 ## 0.16.3 - 2026-10-08
 
 - Recover from Ravin single-sign-on rejecting Firefox/Zen keys by transferring the authorized portal session to a persistent Chromium browser.

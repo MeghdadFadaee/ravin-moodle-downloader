@@ -17,3 +17,9 @@ Contributions are welcome. Keep changes focused, dependency-free where practical
 5. Open a pull request describing the problem, approach, and test coverage.
 
 Tests must use synthetic data. Do not include real course content, account identifiers, session values, or credentials in fixtures or issue reports.
+
+## Release checklist
+
+1. Update the version in `pyproject.toml` and `src/ravin/constants.py`.
+2. Add a dated release entry to `CHANGELOG.md`.
+3. Install the package and check that `ravin --version` reports the new version.

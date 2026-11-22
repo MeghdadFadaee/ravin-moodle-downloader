@@ -11,12 +11,26 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from ravin.auth import _capture_browser_session, _authenticated_browser_session, _select_login_tab
+from ravin.auth import (
+    _authenticate_browser_session,
+    _authenticated_browser_session,
+    _capture_browser_session,
+    _select_login_tab,
+)
 from ravin.client import MoodleClient
-from ravin.models import MoodleError
+from ravin.models import MoodleConnectionError, MoodleError
 
 
 class BrowserUpdateTests(unittest.TestCase):
+    def test_network_failure_does_not_refresh_saved_browser_session(self):
+        args = SimpleNamespace(site="https://training.example", refresh_session=False)
+        with patch.object(
+            MoodleClient, "authenticate", side_effect=MoodleConnectionError("DNS failed")
+        ), patch("ravin.auth._capture_browser_session") as capture:
+            with self.assertRaisesRegex(MoodleConnectionError, "DNS failed"):
+                _authenticate_browser_session(args, ("Synthetic Browser", "MoodleSession=synthetic"))
+        capture.assert_not_called()
+
     def capture(self, *, captcha=False, existing_session=False, new_tab=False, invalid_key=False, use_zen=False):
         test = self
 

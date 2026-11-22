@@ -7,6 +7,10 @@ class MoodleError(RuntimeError):
     """A friendly, expected Moodle/API error."""
 
 
+class MoodleConnectionError(MoodleError):
+    """A failure to connect to Moodle or finish reading its response."""
+
+
 @dataclass(frozen=True)
 class Course:
     id: int

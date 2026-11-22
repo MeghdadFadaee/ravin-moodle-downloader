@@ -24,6 +24,7 @@ python3 -m pip install .
 ```
 
 This installs the `ravin` command, browser automation, and shell completion support. The equivalent module entry point is `python3 -m ravin`.
+After updating the checkout, run the same install command in your active virtual environment to update an existing installation. Check the installed version with `ravin --version`.
 
 ### Shell tab completion
 
@@ -100,6 +101,8 @@ mirror of non-video files is required.
 The original `./sync-public.sh` entry point remains available for compatibility.
 
 `scan` replaces the former separate course-listing, file-listing, and library-generation commands. It reads the LMS structure, reconciles everything already present on disk, and writes the JSON manifests consumed by the static site.
+
+When an LMS activity redirects to a file, online scanning uses the file's response headers. Use `ravin download COURSE_ID` to transfer the file contents.
 
 Scan only selected courses or print machine-readable results:
 

@@ -109,6 +109,23 @@ class CourseAssessmentTests(unittest.TestCase):
         self.assertEqual(item["kind"], "assessment")
         self.assertEqual(item["bundle_path"], "assessments/final-exam")
 
+    def test_local_exam_pdf_remains_available_after_repeated_scans(self) -> None:
+        course = self.write_course(56)
+        self.write_overlay(course, filename="final-exam.pdf")
+        attachment = course / "assessments" / "final-exam" / "files" / "final-exam.pdf"
+        attachment.parent.mkdir(parents=True)
+        attachment.write_bytes(b"exam PDF attachment")
+
+        scan_offline(self.public, [56])
+        scan_offline(self.public, [56])
+
+        manifest = json.loads((course / "manifest.json").read_text(encoding="utf-8"))
+        item = manifest["course"]["sections"][-1]["items"][0]
+        self.assertEqual(item["state"]["download"], "complete")
+        self.assertEqual(item["extension"], "pdf")
+        self.assertEqual(item["mimetype"], "application/pdf")
+        self.assertEqual(item["local_url"], "courses/56/assessments/final-exam/files/final-exam.pdf")
+
     def test_question_import_uses_the_local_assessment_bundle(self) -> None:
         course = self.write_course(51)
         self.write_overlay(course)

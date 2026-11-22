@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ravin import Course, FileItem, MoodleClient
+from ravin import Course, FileItem, MoodleClient, MoodleError
 from ravin.auth import (
     _browser_login_url,
     _capture_browser_session,
@@ -38,9 +38,14 @@ from ravin.scan import format_scan, scan_offline, scan_remote
 
 
 class _FakeResponse:
-    def __init__(self, chunks, *, status=200, content_range=""):
+    def __init__(
+        self, chunks, *, status=200, content_range="",
+        url="https://training.example/pluginfile.php/file.bin",
+    ):
         self.chunks = list(chunks)
         self.status = status
+        self.length = None
+        self.url = url
         self.headers = email.message.Message()
         self.headers["Content-Disposition"] = 'attachment; filename="file.bin"'
         if content_range:
@@ -56,9 +61,9 @@ class _FakeResponse:
         return self.status
 
     def geturl(self):
-        return "https://training.example/pluginfile.php/file.bin"
+        return self.url
 
-    def read(self, _size):
+    def read(self, _size=None):
         if not self.chunks:
             return b""
         value = self.chunks.pop(0)
@@ -691,6 +696,58 @@ class ParserTests(unittest.TestCase):
             destination = client.download(item, Path(directory), retries=1, retry_delay=0)
             self.assertEqual(destination.read_bytes(), b"abcdexyz!!")
         self.assertEqual(client.request_headers, [{}, {"Range": "bytes=8-"}])
+
+    def test_module_inspection_does_not_read_redirected_file_body(self):
+        course_url = "https://training.example/course/view.php?id=44"
+        course_page = b"""
+        <li id="section-1" data-for="section" data-id="940" data-sectionid="1">
+        <li class="modtype_resource" data-for="cmitem" data-id="4940">
+        <a href="/mod/resource/view.php?id=4940">Lesson</a></li></li>
+        """
+        response = _FakeResponse([AssertionError("inspection read the media body")])
+        response.headers["Content-Type"] = "video/mp4"
+        response.headers.replace_header(
+            "Content-Disposition", 'inline; filename="lesson.mp4"'
+        )
+        response.headers["Content-Length"] = "607191032"
+        client = _FakeDownloadClient([_FakeResponse([course_page], url=course_url), response])
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            client, "list_courses", return_value=[Course(44, "Course")]
+        ):
+            public = Path(directory)
+            scan_remote(client, public, [44])
+            manifest_path = public / "courses" / "44" / "manifest.json"
+            original = manifest_path.read_bytes()
+            item = json.loads(original)["course"]["sections"][0]["items"][0]
+            self.assertEqual(item["filename"], "lesson.mp4")
+            self.assertEqual(item["mimetype"], "video/mp4")
+            self.assertEqual(item["remote_size"], 607191032)
+
+            client.responses.append(_FakeResponse([course_page], url=course_url))
+            for _ in range(4):
+                interrupted = _FakeResponse([http.client.IncompleteRead(b"<html>")])
+                del interrupted.headers["Content-Disposition"]
+                interrupted.headers["Content-Type"] = "text/html"
+                client.responses.append(interrupted)
+            with patch("ravin.client.time.sleep"), self.assertRaisesRegex(
+                MoodleError, "connection interrupted while reading"
+            ):
+                scan_remote(client, public, [44])
+            self.assertEqual(manifest_path.read_bytes(), original)
+
+    def test_module_inspection_retries_incomplete_html(self):
+        first = _FakeResponse([http.client.IncompleteRead(b"<html>")])
+        second = _FakeResponse([b"<html>complete</html>"])
+        for response in (first, second):
+            del response.headers["Content-Disposition"]
+            response.headers["Content-Type"] = "text/html; charset=utf-8"
+        client = _FakeDownloadClient([first, second])
+
+        with patch("ravin.client.time.sleep"):
+            page, _, _ = client._read_text("/mod/folder/view.php?id=1", inspect_module=True)
+
+        self.assertEqual(page, "<html>complete</html>")
 
     def test_existing_partial_download_is_resumed(self):
         response = _FakeResponse([b"67890"], status=206, content_range="bytes 5-9/10")

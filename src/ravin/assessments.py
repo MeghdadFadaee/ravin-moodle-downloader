@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 import re
 from pathlib import Path
 from typing import Any
@@ -139,9 +140,9 @@ def merge_assessments(public: Path, course: dict[str, Any]) -> dict[str, Any]:
                 "activity_type": "assessment",
                 "title": assessment["title"],
                 "description": str(assessment.get("description") or ""),
-                "filename": "",
-                "extension": "",
-                "mimetype": "",
+                "filename": str(assessment.get("filename") or ""),
+                "extension": Path(str(assessment.get("filename") or "")).suffix.lstrip(".").casefold(),
+                "mimetype": mimetypes.guess_type(str(assessment.get("filename") or ""))[0] or "",
                 "source_url": course.get("source_url"),
                 "lms_completed": None,
                 **common,

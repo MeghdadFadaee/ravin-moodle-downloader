@@ -4,7 +4,6 @@ import http.client
 import http.cookiejar
 import html
 import json
-import mimetypes
 import re
 import sys
 import time
@@ -16,7 +15,7 @@ from typing import Any
 
 from .constants import DOWNLOADABLE_MODULES, USER_AGENT
 from .local_files import archive_existing_file
-from .models import Course, FileItem, MoodleError
+from .models import Course, FileItem, MoodleConnectionError, MoodleError
 from .parsers import _CourseStructureParser, _FormParser, _LinkParser, _parse_moodle_config
 from .paths import (
     _activity_root,
@@ -112,15 +111,55 @@ class MoodleClient:
             detail = exc.read(500).decode("utf-8", "replace").strip()
             raise MoodleError(f"HTTP {exc.code} from {url}: {detail or exc.reason}") from exc
         except urllib.error.URLError as exc:
-            raise MoodleError(f"Could not connect to {url}: {exc.reason}") from exc
-        except (TimeoutError, http.client.HTTPException) as exc:
-            raise MoodleError(f"connection to {url} failed: {exc}") from exc
+            raise MoodleConnectionError(f"Could not connect to {url}: {exc.reason}") from exc
+        except (ConnectionError, TimeoutError, http.client.HTTPException) as exc:
+            raise MoodleConnectionError(f"connection to {url} failed: {exc}") from exc
 
-    def _read_text(self, path_or_url: str, **kwargs: Any) -> tuple[str, str, Any]:
-        with self._request(path_or_url, **kwargs) as response:
-            raw = response.read()
-            charset = response.headers.get_content_charset() or "utf-8"
-            return raw.decode(charset, "replace"), response.geturl(), response.headers
+    def _read_text(
+        self,
+        path_or_url: str,
+        *,
+        inspect_module: bool = False,
+        **kwargs: Any,
+    ) -> tuple[str, str, Any]:
+        attempts = 1 if kwargs.get("data") is not None else 4
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(2 ** (attempt - 1))
+            try:
+                with self._request(path_or_url, **kwargs) as response:
+                    headers = response.headers
+                    final_url = response.geturl()
+                    if inspect_module and self._is_module_file(headers):
+                        return "", final_url, headers
+                    if inspect_module:
+                        limit = 8 * 1024 * 1024
+                        raw = response.read(limit + 1)
+                        if len(raw) > limit:
+                            raise MoodleError("activity page exceeds the 8 MiB inspection limit")
+                        if response.length:
+                            raise http.client.IncompleteRead(raw, response.length)
+                    else:
+                        raw = response.read()
+                    charset = headers.get_content_charset() or "utf-8"
+                    return raw.decode(charset, "replace"), final_url, headers
+            except MoodleConnectionError:
+                if attempt + 1 == attempts:
+                    raise
+            except (ConnectionError, TimeoutError, http.client.HTTPException) as exc:
+                if attempt + 1 == attempts:
+                    raise MoodleConnectionError(
+                        f"connection interrupted while reading {path_or_url}: {exc}"
+                    ) from exc
+        raise AssertionError("response read must return or raise")
+
+    @staticmethod
+    def _is_module_file(headers: Any) -> bool:
+        content_type = headers.get_content_type()
+        return headers.get_content_disposition() == "attachment" or not (
+            content_type.startswith("text/")
+            or content_type in {"application/xhtml+xml", "application/xml"}
+        )
 
     def authenticate(self) -> str:
         if self.has_browser_session:
@@ -387,13 +426,14 @@ class MoodleClient:
             separator = "&" if urllib.parse.urlparse(module_url).query else "?"
             inspect_url = module_url + separator + "redirect=0"
             try:
-                module_page, module_final_url, headers = self._read_text(inspect_url)
+                module_page, module_final_url, headers = self._read_text(inspect_url, inspect_module=True)
             except MoodleError as exc:
+                if not isinstance(exc.__cause__, urllib.error.HTTPError):
+                    raise
                 print(f"warning: skipped {activity}: {exc}", file=sys.stderr)
                 continue
-            content_type = headers.get_content_type() if hasattr(headers, "get_content_type") else ""
-            if not (content_type.startswith("text/") or content_type in {"application/xhtml+xml", "application/xml"}):
-                files.append(self._web_file_item(course_id, "Course files", activity, module_final_url, metadata))
+            if self._is_module_file(headers):
+                files.append(self._web_file_item(course_id, "Course files", activity, module_final_url, metadata, headers))
                 continue
             self._validate_web_page(module_page, module_final_url)
             module_parser = _LinkParser(module_final_url)
@@ -413,15 +453,21 @@ class MoodleClient:
         activity: str,
         url: str,
         metadata: tuple[dict[str, Any], dict[str, Any]] | None = None,
+        headers: Any = None,
     ) -> FileItem:
         path_name = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path)).name
+        content_length = headers.get("Content-Length", "") if headers is not None else ""
         section_metadata, activity_metadata = metadata or ({}, {})
         return FileItem(
             course_id=course_id,
             section=section,
             activity=activity or path_name,
-            filename=path_name or _clean_name(activity),
+            filename=_filename_from_headers(headers, url, activity) if headers is not None else (
+                path_name or _clean_name(activity)
+            ),
             url=url,
+            mimetype=headers.get_content_type() if headers is not None else "",
+            filesize=int(content_length) if content_length.isascii() and content_length.isdecimal() else None,
             chapter=str(section_metadata.get("name") or section),
             section_id=section_metadata.get("id"),
             section_number=section_metadata.get("number"),

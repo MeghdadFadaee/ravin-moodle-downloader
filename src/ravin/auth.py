@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .client import MoodleClient
 from .constants import DEFAULT_RAVIN_LOGIN_URL, ENV_KEYS
-from .models import MoodleError
+from .models import MoodleConnectionError, MoodleError
 
 
 class _InvalidSSOKey(MoodleError):
@@ -588,7 +588,7 @@ def _authenticate_browser_session(
     try:
         mode = client.authenticate()
     except MoodleError as exc:
-        if not from_saved:
+        if not from_saved or isinstance(exc, MoodleConnectionError):
             raise
         print(f"Saved browser session is no longer valid ({exc}).", file=sys.stderr)
         if args.manual_session:
