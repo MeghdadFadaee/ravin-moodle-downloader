@@ -20,6 +20,17 @@ Use four spaces for Python indentation, `snake_case` for modules and functions, 
 
 Add or update `unittest` coverage for behavioral changes. Use `tests/test_<feature>.py` files and descriptive `test_*` methods. Use synthetic fixtures and temporary directories for course files. Bash and Zsh are needed to exercise both shell completion paths. CI tests Python 3.10, 3.12, and 3.14 without a numeric coverage threshold.
 
+## Moodle Scans and Downloads
+
+- Keep online discovery separate from file transfer. Use response headers to identify file redirects during scans. Course downloads go through `ravin download`, which manages partial files and updates the local manifests.
+- Treat exhausted network retries as scan failures. Preserve the last successful manifests and distinguish connectivity failures from expired sessions before triggering browser authentication.
+- Exercise the scan entry point with synthetic HTTP responses and a temporary `--public` root. Preserve compatibility with existing manifests and local activity bundles. Report live LMS verification separately from local test results.
+
+## Release Checks
+
+- For fixes or features shipped to users, follow the [release checklist](CONTRIBUTING.md#release-checklist). Keep the versions in `pyproject.toml` and `src/ravin/constants.py` in sync, update `CHANGELOG.md`, and verify `ravin --version` from the project virtual environment after installation.
+- Update the README when command usage or user-visible behavior changes. When changing a shared JavaScript or CSS file, update that asset's cache key in both `public/index.html` and `public/course.html`.
+
 ## Commits and Pull Requests
 
 Prefer the common history patterns `feat: ...`, `fix: ...`, and scoped forms such as `fix(scan): ...`. Use a short, imperative summary. Describe the problem, approach, and test coverage in the PR. Link related issues and include screenshots for visible library changes when helpful.
